@@ -36,7 +36,7 @@ jobs:
           git diff --cached --quiet || (git commit -m "gen [skip ci]" && git push)
       - name: Dobby
         run: |
-          if [ -f vendor/dobby/build/libdobby.a ]; then
+          if [ -f vendor/dobby/build/libdobby.a ] && [ -d vendor/dobby/include ]; then
             echo "Dobby already built, skipping."
             exit 0
           fi
@@ -54,8 +54,10 @@ jobs:
             -DPlugin.Darwin.ObjectiveC=ON -DDarwin.GenerateFramework=OFF \
             -DCMAKE_BUILD_TYPE=Release
           make -j$(sysctl -n hw.ncpu)
-          mkdir -p "$GITHUB_WORKSPACE/vendor/dobby/build"
+          mkdir -p "$GITHUB_WORKSPACE/vendor/dobby/build" "$GITHUB_WORKSPACE/vendor/dobby/include"
           cp "$(find /tmp/dobby -name libdobby.a | head -n1)" "$GITHUB_WORKSPACE/vendor/dobby/build/libdobby.a"
+          cp -r /tmp/dobby/include/* "$GITHUB_WORKSPACE/vendor/dobby/include/" 2>/dev/null || true
+          find "$GITHUB_WORKSPACE/vendor/dobby/include" -type f | head
       - name: Build
         run: make clean || true; make
       - name: Collect
