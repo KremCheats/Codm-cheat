@@ -14,7 +14,7 @@ ARCHS = arm64
 include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = CODMCheat
-CODMCheat_FILES = CODMCheat.mm Src/Hooks.mm Src/fishhook.c Src/Bypass.mm Src/Cheat.mm Src/Overlay.mm
+CODMCheat_FILES = CODMCheat.mm Src/Hooks.mm Src/fishhook.c Src/Bypass.mm Src/Unity.mm Src/Cheat.mm Src/Overlay.mm
 CODMCheat_CFLAGS = -fobjc-arc -I./Src -Wno-unused-function -Wno-deprecated-declarations
 CODMCheat_CCFLAGS = -fobjc-arc -I./Src -std=c++17
 CODMCheat_FRAMEWORKS = UIKit Foundation QuartzCore CoreGraphics Security
@@ -43,8 +43,6 @@ static void CODMCheatEntry(void) {
         if (!isCODM()) return;
         LOGI("CODMCheat entry");
         Bypass::install();
-
-        // Start Cheat once, then let it manage its own scene-attach retries.
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
             [[Cheat shared] start];
@@ -484,6 +482,212 @@ void install() {
 }
 """)
 
+w("Src/Unity.h", r"""
+#ifndef UNITY_H
+#define UNITY_H
+#include <stdint.h>
+#include <string>
+
+namespace Unity {
+
+// IL2CPP exported symbols we care about.
+typedef void* (*t_domain_get)();
+typedef void* (*t_thread_attach)(void*);
+typedef void* (*t_domain_assembly_open)(void*, const char*);
+typedef void* (*t_assembly_get_image)(void*);
+typedef void* (*t_class_from_name)(void*, const char*, const char*);
+typedef void* (*t_class_get_method_from_name)(void*, const char*, int);
+typedef void* (*t_class_get_field_from_name)(void*, const char*);
+typedef void* (*t_runtime_invoke)(void*, void*, void**, void**);
+typedef void* (*t_object_new)(void*);
+typedef uint32_t (*t_image_get_class_count)(void*);
+typedef void* (*t_image_get_class)(void*, uint32_t);
+typedef const char* (*t_class_get_name)(void*);
+typedef const char* (*t_class_get_namespace)(void*);
+
+// init: locate UnityFramework, resolve symbols, get domain. Returns true on success.
+bool init();
+
+// introspection for diagnostics
+const char* statusMessage();   // human readable, "il2cpp ok" etc.
+uintptr_t frameworkBase();
+int       resolvedSymbols();
+int       classCount();
+
+// access
+void* domain();
+void* image(const char* name);
+void* klass(const char* ns, const char* name);
+void* method(void* klass, const char* name, int argc);
+void* field(void* klass, const char* name);
+
+extern t_domain_get             p_domain_get;
+extern t_thread_attach          p_thread_attach;
+extern t_domain_assembly_open   p_domain_assembly_open;
+extern t_assembly_get_image     p_assembly_get_image;
+extern t_class_from_name        p_class_from_name;
+extern t_class_get_method_from_name p_class_get_method_from_name;
+extern t_class_get_field_from_name  p_class_get_field_from_name;
+extern t_runtime_invoke         p_runtime_invoke;
+extern t_object_new             p_object_new;
+extern t_image_get_class_count  p_image_get_class_count;
+extern t_image_get_class        p_image_get_class;
+extern t_class_get_name         p_class_get_name;
+extern t_class_get_namespace    p_class_get_namespace;
+
+} // namespace Unity
+#endif
+""")
+
+w("Src/Unity.mm", r"""
+#import "Unity.h"
+#import "Common.h"
+#import <dlfcn.h>
+#import <string.h>
+#import <mach-o/dyld.h>
+#import <mach-o/loader.h>
+
+namespace Unity {
+
+t_domain_get             p_domain_get             = nullptr;
+t_thread_attach          p_thread_attach          = nullptr;
+t_domain_assembly_open   p_domain_assembly_open   = nullptr;
+t_assembly_get_image     p_assembly_get_image     = nullptr;
+t_class_from_name        p_class_from_name        = nullptr;
+t_class_get_method_from_name p_class_get_method_from_name = nullptr;
+t_class_get_field_from_name  p_class_get_field_from_name  = nullptr;
+t_runtime_invoke         p_runtime_invoke         = nullptr;
+t_object_new             p_object_new             = nullptr;
+t_image_get_class_count  p_image_get_class_count  = nullptr;
+t_image_get_class        p_image_get_class        = nullptr;
+t_class_get_name         p_class_get_name         = nullptr;
+t_class_get_namespace    p_class_get_namespace    = nullptr;
+
+static uintptr_t g_base = 0;
+static void*     g_domain = nullptr;
+static void*     g_img    = nullptr;
+static char      g_status[128] = "not initialized";
+static int       g_syms   = 0;
+static int       g_classes = 0;
+
+static void* rs(const char* n) { return dlsym(RTLD_DEFAULT, n); }
+
+static uintptr_t findUnityBase() {
+    uint32_t n = _dyld_image_count();
+    for (uint32_t i = 0; i < n; i++) {
+        const char* nm = _dyld_get_imageinfo_name(i;
+);
+        if (nm &&+ strstr(nm, "UnityFramework (")) {
+            return (uintptr_tinst)_dyld_get_image_header(i);
+        }
+    }
+    return 0;
+}
+
+bool init() {
+    g_base = findUnityBase();
+    if (!g_base) {
+        snprintf(g_status, sizeof(g_status), "UnityFramework not mapped");
+        return false;
+    }
+
+    p_domain_get             = (t_domain_get)             rs("il2cpp_domain_get");
+    p_thread_attach          = (t_thread_attach)          rs("il2cpp_thread_attach");
+    p_domain_assembly_open   = (t_domain_assembly_open)   rs("il2cpp_domain_assembly_open");
+    p_assembly_get_image     = (t_assembly_get_image)     rs("il2cpp_assembly_get_image");
+    p_class_from_name        = (t_class_from_name)        rs("il2cpp_class_from_name");
+    p_class_get_method_from_name = (t_class_get_method_from_name) rs("il2cpp_class_get_method_from_name");
+    p_class_get_field_from_name  = (t_class_get_field_from_name)  rs("il2cpp_class_get_field_from_name");
+    p_runtime_invoke         = (t_runtime_invoke)         rs("il2cpp_runtime_invoke");
+    p_object_new             = (t_object_new)             rs("il2cpp_object_new");
+    p_image_get_class_count  = (t_image_get_class_count)  rs("il2cpp_image_get_class_count");
+    p_image_get_class        = (t_image_get_class)        rs("il2cpp_image_get_class");
+    p_class_get_name         = (t_class_get_name)         rs("il2cpp_class_get_name");
+    p_class_get_namespace    = (t_class_get_namespace)    rs("il2cpp_class_get_namespace");
+
+    g_syms = 0;
+    if (p_domain_get) g_syms++;
+    if (p_thread_attach) g_syms++;
+    if (p_domain_assembly_open) g_syms++;
+    if (p_assembly_get_image) g_syms++;
+    if (p_class_from_name) g_syms++;
+    if (p_class_get_method_from_name) g_syms++;
+    if (p_class_get_field_from_name) g_syms++;
+    if (p_runtime_invoke) g_syms++;
+    if (p_object_new) g_syms++;
+    if (p_image_get_class_count) g_syms++;
+    if (p_image_get_class) g_syms++;
+    if (p_class_get_name) g_syms++;
+    if (p_class_get_namespace) g_syms++;
+
+    if (!p_domain_get || !p_domain_assembly_open || !p_assembly_get_image) {
+        snprintf(g_status, sizeof(g_status),
+                 "il2cpp core missing (%d/13)", g_syms);
+        return false;
+    }
+
+    g_domain = p_domain_get();
+    if (!g_domain) {
+        snprintf(g_status, sizeof(g_status), "il2cpp_domain_get null");
+        return false;
+    }
+    if (p_thread_attach) p_thread_attach(g_domain);
+
+    // try to open Assembly-CSharp and count classes
+    void* asm_ = p_domain_assembly_open(g_domain, "Assembly-CSharp");
+    if (asm_) {
+        g_img = p_assembly_get_image(asm_);
+        if (g_img && p_image_get_class_count) {
+            uint32_t c = p_image_get_class_count(g_img);
+            g_classes = (int)c;
+        }
+    }
+
+    if (g_img) {
+        snprintf(g_status, sizeof(g_status),
+                 "il2cpp ok | syms %d/13 | classes %d", g_syms, g_classes);
+    } else {
+        snprintf(g_status, sizeof(g_status),
+                 "il2cpp ok | syms %d/13 | A-CSharp miss", g_syms);
+    }
+    return true;
+}
+
+const char* statusMessage() { return g_status; }
+uintptr_t frameworkBase() { return g_base; }
+int resolvedSymbols() { return g_syms; }
+int classCount() { return g_classes; }
+
+void* domain() { return g_domain; }
+
+void* image(const char* name) {
+    if (!g_domain || !p_domain_assembly_open || !p_assembly_get_image) return nullptr;
+    void* asm_ = p_domain_assembly_open(g_domain, name);
+    if (!asm_) return nullptr;
+    return p_assembly_get_image(asm_);
+}
+
+void* klass(const char* ns, const char* name) {
+    if (!g_img) {
+        g_img = image("Assembly-CSharp");
+    }
+    if (!g_img || !p_class_from_name) return nullptr;
+    return p_class_from_name(g_img, ns, name);
+}
+
+void* method(void* k, const char* name, int argc) {
+    if (!k || !p_class_get_method_from_name) return nullptr;
+    return p_class_get_method_from_name(k, name, argc);
+}
+
+void* field(void* k, const char* name) {
+    if (!k || !p_class_get_field_from_name) return nullptr;
+    return p_class_get_field_from_name(k, name);
+}
+
+} // namespace Unity
+""")
+
 w("Src/Overlay.h", r"""
 #ifndef OVERLAY_H
 #define OVERLAY_H
@@ -491,8 +695,7 @@ w("Src/Overlay.h", r"""
 #import <QuartzCore/QuartzCore.h>
 @interface CheatOverlay : UIWindow
 @property (nonatomic, strong) CAShapeLayer *boxes;
-@property (nonatomic, strong) CATextLayer *info;
-+ (instancetype)shared;
+@property (nonatomic, strong) CATextLayer *ancetype)shared;
 - (void)attachToScene;
 - (void)begin;
 - (void)setInfoText:(NSString *)t;
@@ -522,29 +725,25 @@ w("Src/Overlay.mm", r"""
         self.backgroundColor = [UIColor clearColor];
         self.userInteractionEnabled = NO;
         self.hidden = YES;
-
         self.boxes = [CAShapeLayer layer];
         self.boxes.frame = self.bounds;
         self.boxes.fillColor = [UIColor clearColor].CGColor;
         self.boxes.lineWidth = 1.5;
         self.boxes.strokeColor = [UIColor colorWithRed:0 green:1 blue:0.3 alpha:1].CGColor;
-
         self.info = [CATextLayer layer];
-        self.info.frame = CGRectMake(12, 70, frame.size.width - 24, 260);
+        self.info.frame = CGRectMake(12, 70, frame.size.width - 24, 400);
         self.info.foregroundColor = [UIColor colorWithRed:0 green:1 blue:0.3 alpha:1].CGColor;
-        self.info.fontSize = 14;
+        self.info.fontSize = 13;
         self.info.contentsScale = [UIScreen mainScreen].scale;
         self.info.alignmentMode = kCAAlignmentLeft;
         self.info.wrapped = YES;
         self.info.string = @"CODMCheat booting...";
-
         [self.layer addSublayer:self.boxes];
         [self.layer addSublayer:self.info];
     }
     return self;
 }
 
-// Find the app's active UIWindowScene and attach our window to it.
 - (void)attachToScene {
     UIWindowScene *scene = nil;
     for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
@@ -557,20 +756,14 @@ w("Src/Overlay.mm", r"""
         }
     }
     if (scene) {
-        // Re-parent onto the scene's window list.
         self.windowScene = scene;
         self.hidden = NO;
         self.windowLevel = UIWindowLevelAlert + 5000;
-        NSLog(@"[CODMCheat] attached to scene %@", scene);
-    } else {
-        NSLog(@"[CODMCheat] no active scene yet");
     }
 }
 
 - (void)begin { self.boxes.path = NULL; }
-
 - (void)setInfoText:(NSString *)t { self.info.string = t; }
-
 - (void)drawBoxAt:(CGRect)r color:(UIColor *)c {
     UIBezierPath *p = [UIBezierPath bezierPathWithRect:r];
     CGMutablePathRef cur = CGPathCreateMutableCopy(self.boxes.path ?: CGPathCreateMutable());
@@ -578,7 +771,6 @@ w("Src/Overlay.mm", r"""
     self.boxes.path = cur;
     CGPathRelease(cur);
 }
-
 - (void)drawLineFrom:(CGPoint)a to:(CGPoint)b color:(UIColor *)c {
     CGMutablePathRef cur = CGPathCreateMutableCopy(self.boxes.path ?: CGPathCreateMutable());
     CGPathMoveToPoint(cur, NULL, a.x, a.y);
@@ -606,10 +798,13 @@ w("Src/Cheat.mm", r"""
 #import "Cheat.h"
 #import "Common.h"
 #import "Overlay.h"
+#import "Unity.h"
 #import <QuartzCore/QuartzCore.h>
 
 @interface Cheat ()
 @property (nonatomic, strong) NSTimer *sceneRetry;
+@property (nonatomic, strong) NSTimer *unityRetry;
+@property (nonatomic, assign) BOOL unityOk;
 @end
 
 @implementation Cheat
@@ -623,11 +818,16 @@ w("Src/Cheat.mm", r"""
 
 - (void)start {
     LOGI("Cheat::start");
-    // Try to attach now; if the scene isn't ready, keep retrying every 500ms.
     [self tryAttach];
     self.sceneRetry = [NSTimer scheduledTimerWithTimeInterval:0.5
                                                        target:self
                                                      selector:@selector(tryAttach)
+                                                     userInfo:nil
+                                                      repeats:YES];
+    // Unity is usually ready ~5-8s in.
+    self.unityRetry = [NSTimer scheduledTimerWithTimeInterval:2.0
+                                                       target:self
+                                                     selector:@selector(tryUnity)
                                                      userInfo:nil
                                                       repeats:YES];
 }
@@ -636,15 +836,42 @@ w("Src/Cheat.mm", r"""
     CheatOverlay *ov = [CheatOverlay shared];
     [ov attachToScene];
     if (ov.hidden == NO) {
-        [ov setInfoText:@"CODM (non-JB)\nbypass active\noverlay visible"];
+        [self render];
         [self.sceneRetry invalidate];
         self.sceneRetry = nil;
     }
 }
 
+- (void)tryUnity {
+    if (self.unityOk) return;
+    if (Unity::init()) {
+        self.unityOk = YES;
+        [self.unityRetry invalidate];
+        self.unityRetry = nil;
+    }
+    [self render];
+}
+
+- (void)render {
+    CheatOverlay *ov = [CheatOverlay shared];
+    NSMutableString* s = [NSMutableString string];
+    [s appendString:@"CODM (non-JB)\n"];
+    [s appendString:@"bypass active\n"];
+    [s appendFormat:@"unity: %s\n", Unity::statusMessage()];
+    if (self.unityOk) {
+        [s appendFormat:@"fw: 0x%lx\n", (unsigned long)Unity::frameworkBase()];
+        [s appendFormat:@"syms: %d\n", Unity::resolvedSymbols()];
+        [s appendFormat:@"classes: %d\n", Unity::classCount()];
+        [s appendString:@"il2cpp reachable"];
+    } else {
+        [s appendString:@"waiting for unity..."];
+    }
+    [ov setInfoText:s];
+}
+
 - (void)stop {
-    [self.sceneRetry invalidate];
-    self.sceneRetry = nil;
+    [self.sceneRetry invalidate]; self.sceneRetry = nil;
+    [self.unityRetry invalidate]; self.unityRetry = nil;
     [[CheatOverlay shared] setInfoText:@""];
 }
 
