@@ -10,10 +10,10 @@
     return s;
 }
 - (void)start {
-    LOGI("start");
+    LOGI("Cheat::start");
     dispatch_async(dispatch_get_main_queue(), ^{
         [[CheatOverlay shared] attach];
-        [[CheatOverlay shared] setInfoText:@"CODM (non-JB)\nloaded"];
+        [[CheatOverlay shared] setInfoText:@"CODM (non-JB)\nbypass active\nloaded"];
     });
 }
 - (void)stop {}

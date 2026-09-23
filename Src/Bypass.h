@@ -2,6 +2,6 @@
 #define BYPASS_H
 namespace Bypass {
 void install();
-void applyAceHooks();
+void scrubMainBinaryLoadCommands();
 }
 #endif
