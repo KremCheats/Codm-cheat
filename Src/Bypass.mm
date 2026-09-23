@@ -162,35 +162,26 @@ namespace Bypass {
 
 void install() {
     LOGI("Bypass installing");
-
-    // libc
     HK::rebind("fopen",   (void *)h_fopen,   (void **)&o_fopen);
     HK::rebind("stat",    (void *)h_stat,    (void **)&o_stat);
     HK::rebind("lstat",   (void *)h_lstat,   (void **)&o_lstat);
     HK::rebind("access",  (void *)h_access,  (void **)&o_access);
     HK::rebind("opendir", (void *)h_opendir, (void **)&o_opendir);
     HK::rebind("getenv",  (void *)h_getenv,  (void **)&o_getenv);
-
-    // process
     HK::rebind("ptrace",  (void *)h_ptrace,  (void **)&o_ptrace);
     HK::rebind("sysctl",  (void *)h_sysctl,  (void **)&o_sysctl);
     HK::rebind("dladdr",  (void *)h_dladdr,  (void **)&o_dladdr);
-
-    // objc
     HK::swizzleClass([NSFileManager class], @selector(fileExistsAtPath:),
                      (IMP)h_fE, (IMP *)&o_fE);
     HK::swizzleClass([NSFileManager class], @selector(fileExistsAtPath:isDirectory:),
                      (IMP)h_fED, (IMP *)&o_fED);
     HK::swizzleClass([UIApplication class], @selector(canOpenURL:),
                      (IMP)h_cOU, (IMP *)&o_cOU);
-
-    // code signing
     HK::rebind("SecCodeCheckValidity",                 (void *)h_SecCV,   (void **)&o_SecCV);
     HK::rebind("SecCodeCheckValidityWithErrors",       (void *)h_SecCVWE, (void **)&o_SecCVWE);
     HK::rebind("SecStaticCodeCheckValidity",           (void *)h_SecSCV,  (void **)&o_SecSCV);
     HK::rebind("SecStaticCodeCheckValidityWithErrors", (void *)h_SecSCVWE,(void **)&o_SecSCVWE);
     HK::rebind("SecCodeCopySigningInformation",        (void *)h_SecCSI,  (void **)&o_SecCSI);
-
     LOGI("Bypass installed");
 }
 

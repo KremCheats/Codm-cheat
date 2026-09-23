@@ -6,7 +6,10 @@
 @property (nonatomic, strong) CAShapeLayer *boxes;
 @property (nonatomic, strong) CATextLayer *info;
 + (instancetype)shared;
-- (void)attach;
+- (void)attachToScene;
+- (void)begin;
 - (void)setInfoText:(NSString *)t;
+- (void)drawBoxAt:(CGRect)r color:(UIColor *)c;
+- (void)drawLineFrom:(CGPoint)a to:(CGPoint)b color:(UIColor *)c;
 @end
 #endif
