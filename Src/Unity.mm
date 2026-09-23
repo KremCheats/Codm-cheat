@@ -7,32 +7,13 @@
 #import <mach-o/loader.h>
 
 namespace Unity {
-
 static uintptr_t g_base = 0;
-static char      g_status[160] = "not initialized";
+static char      g_status[200] = "not initialized";
 static int       g_syms = 0;
-static int       g_classes = 0;
-
-static uintptr_t findUnityBase() {
-    uint32_t n = _dyld_image_count();
-    for (uint32_t i = 0; i < n; i++) {
-        const char* nm = _dyld_get_image_name(i);
-        if (nm && strstr(nm, "UnityFramework")) {
-            return (uintptr_t)_dyld_get_image_header(i);
-        }
-    }
-    return 0;
-}
 
 bool init() {
-    g_base = findUnityBase();
-    if (!g_base) {
-        snprintf(g_status, sizeof(g_status), "UnityFramework not mapped");
-        return false;
-    }
+    if (_dyld_image_count() > 0) g_base = (uintptr_t)_dyld_get_image_header(0);
 
-    // Count how many il2cpp_* symbols are visible via dlsym.
-    // Do NOT call any of them yet — just check presence.
     const char* names[] = {
         "il2cpp_domain_get",
         "il2cpp_thread_attach",
@@ -49,19 +30,12 @@ bool init() {
         "il2cpp_class_get_namespace",
     };
     g_syms = 0;
-    for (int i = 0; i < 13; i++) {
-        if (dlsym(RTLD_DEFAULT, names[i])) g_syms++;
-    }
-    g_classes = 0;
-    snprintf(g_status, sizeof(g_status),
-             "unity fw 0x%lx | syms %d/13 | (safe mode)",
+    for (int i = 0; i < 13; i++) if (dlsym(RTLD_DEFAULT, names[i])) g_syms++;
+    snprintf(g_status, sizeof(g_status), "main 0x%lx | il2cpp syms %d/13",
              (unsigned long)g_base, g_syms);
     return true;
 }
-
 const char* statusMessage() { return g_status; }
-uintptr_t frameworkBase() { return g_base; }
+uintptr_t mainBase() { return g_base; }
 int resolvedSymbols() { return g_syms; }
-int classCount() { return g_classes; }
-
 }

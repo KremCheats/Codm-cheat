@@ -146,6 +146,16 @@ static void _rebind_symbols_for_image(const struct mach_header *header, intptr_t
     rebind_symbols_for_image(_rebindings_head, header, slide);
 }
 
+int rebind_symbols_image(void* header, intptr_t slide,
+                         struct rebinding rebindings[], size_t nel) {
+    struct rebindings_entry entry;
+    entry.rebindings = rebindings;
+    entry.rebindings_nel = nel;
+    entry.next = NULL;
+    rebind_symbols_for_image(&entry, (const struct mach_header*)header, slide);
+    return 0;
+}
+
 int rebind_symbols(struct rebinding rebindings[], size_t rebindings_nel) {
     int retval = prepend_rebindings(&_rebindings_head, rebindings, rebindings_nel);
     if (retval < 0) return retval;

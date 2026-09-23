@@ -9,6 +9,7 @@
 #import <string.h>
 #import <unistd.h>
 #import <mach-o/dyld.h>
+#import <mach-o/loader.h>
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
@@ -20,19 +21,6 @@
 #endif
 extern "C" int ptrace(int request, pid_t pid, caddr_t addr, int data);
 typedef int32_t SecStatus;
-
-static const char *kSuspect[] = {
-    "CODMCheat", "frida", "Frida", "gum-js", "gadget", "cycript",
-    "CydiaSubstrate", "MobileSubstrate", "Substrate", "libhooker",
-    "ElleKit", "ellekit", "substitute", "Substitute", "TweakInject",
-    "cynject", NULL
-};
-static inline bool isSuspect(const char *p) {
-    if (!p) return false;
-    for (int i = 0; kSuspect[i]; i++)
-        if (strstr(p, kSuspect[i])) return true;
-    return false;
-}
 
 static const char *kJbPaths[] = {
     "/Applications/Cydia.app", "/Applications/Sileo.app", "/Applications/Zebra.app",
@@ -48,7 +36,24 @@ static inline bool isJbPath(const char *p) {
     if (!p) return false;
     for (int i = 0; kJbPaths[i]; i++)
         if (strcmp(p, kJbPaths[i]) == 0) return true;
-    return isSuspect(p);
+    return false;
+}
+
+static char g_ourPath[512] = {0};
+
+static void cacheOurPath() {
+    Dl_info info;
+    if (dladdr((void*)&cacheOurPath, &info) && info.dli_fname) {
+        strncpy(g_ourPath, info.dli_fname, sizeof(g_ourPath)-1);
+    }
+}
+static inline bool isOurImage(const char* nm) {
+    if (!nm) return false;
+    if (g_ourPath[0] && strcmp(nm, g_ourPath) == 0) return true;
+    if (strstr(nm, "frida") || strstr(nm, "Frida")) return true;
+    if (strstr(nm, "gum-js") || strstr(nm, "gadget")) return true;
+    if (strstr(nm, "cycript")) return true;
+    return false;
 }
 
 static FILE *(*o_fopen)(const char *, const char *);
@@ -105,11 +110,14 @@ static int h_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
 static int (*o_dladdr)(const void *, Dl_info *);
 static int h_dladdr(const void *addr, Dl_info *info) {
     int r = o_dladdr(addr, info);
-    if (r && info && info->dli_fname && isSuspect(info->dli_fname)) {
-        info->dli_fname = "/usr/lib/system/libsystem_kernel.dylib";
-        info->dli_fbase = (void *)0x1;
-        info->dli_sname = NULL;
-        info->dli_saddr = NULL;
+    if (r && info && info->dli_fname) {
+        Dl_info self;
+        if (o_dladdr((const void*)&h_dladdr, &self) && self.dli_fbase == info->dli_fbase) {
+            info->dli_fname = "/usr/lib/system/libsystem_kernel.dylib";
+            info->dli_fbase = (void *)0x1;
+            info->dli_sname = NULL;
+            info->dli_saddr = NULL;
+        }
     }
     return r;
 }
@@ -158,10 +166,64 @@ static BOOL h_cOU(UIApplication *s, SEL c, NSURL *u) {
     return o_cOU(s, c, u);
 }
 
+static uint32_t (*o_dyld_count)(void) = NULL;
+static const char *(*o_dyld_name)(uint32_t) = NULL;
+static const struct mach_header *(*o_dyld_hdr)(uint32_t) = NULL;
+static intptr_t (*o_dyld_slide)(uint32_t) = NULL;
+
+static uint32_t h_dyld_count(void) {
+    if (!o_dyld_count) return 0;
+    uint32_t real = o_dyld_count();
+    uint32_t hide = 0;
+    if (o_dyld_name) {
+        for (uint32_t i = 0; i < real; i++)
+            if (isOurImage(o_dyld_name(i))) hide++;
+    }
+    return real - hide;
+}
+static const char *h_dyld_name(uint32_t idx) {
+    if (!o_dyld_count || !o_dyld_name) return NULL;
+    uint32_t real = o_dyld_count();
+    uint32_t seen = 0;
+    for (uint32_t i = 0; i < real; i++) {
+        const char *nm = o_dyld_name(i);
+        if (isOurImage(nm)) continue;
+        if (seen == idx) return nm;
+        seen++;
+    }
+    return o_dyld_name(idx);
+}
+static const struct mach_header *h_dyld_hdr(uint32_t idx) {
+    if (!o_dyld_count || !o_dyld_name || !o_dyld_hdr) return NULL;
+    uint32_t real = o_dyld_count();
+    uint32_t seen = 0;
+    for (uint32_t i = 0; i < real; i++) {
+        const char *nm = o_dyld_name(i);
+        if (isOurImage(nm)) continue;
+        if (seen == idx) return o_dyld_hdr(i);
+        seen++;
+    }
+    return o_dyld_hdr(idx);
+}
+static intptr_t h_dyld_slide(uint32_t idx) {
+    if (!o_dyld_count || !o_dyld_name || !o_dyld_slide) return 0;
+    uint32_t real = o_dyld_count();
+    uint32_t seen = 0;
+    for (uint32_t i = 0; i < real; i++) {
+        const char *nm = o_dyld_name(i);
+        if (isOurImage(nm)) continue;
+        if (seen == idx) return o_dyld_slide(i);
+        seen++;
+    }
+    return o_dyld_slide(idx);
+}
+
 namespace Bypass {
 
 void install() {
-    LOGI("Bypass installing");
+    LOGI("install");
+    cacheOurPath();
+
     HK::rebind("fopen",   (void *)h_fopen,   (void **)&o_fopen);
     HK::rebind("stat",    (void *)h_stat,    (void **)&o_stat);
     HK::rebind("lstat",   (void *)h_lstat,   (void **)&o_lstat);
@@ -170,19 +232,35 @@ void install() {
     HK::rebind("getenv",  (void *)h_getenv,  (void **)&o_getenv);
     HK::rebind("ptrace",  (void *)h_ptrace,  (void **)&o_ptrace);
     HK::rebind("sysctl",  (void *)h_sysctl,  (void **)&o_sysctl);
-    HK::rebind("dladdr",  (void *)h_dladdr,  (void **)&o_dladdr);
+
+    void* mainHdr = (void*)_dyld_get_image_header(0);
+    intptr_t mainSlide = _dyld_get_image_vmaddr_slide(0);
+    HK::rebindInImage(mainHdr, mainSlide, "dladdr", (void*)h_dladdr, (void**)&o_dladdr);
+    if (!o_dladdr) HK::rebind("dladdr", (void*)h_dladdr, (void**)&o_dladdr);
+
     HK::swizzleClass([NSFileManager class], @selector(fileExistsAtPath:),
                      (IMP)h_fE, (IMP *)&o_fE);
     HK::swizzleClass([NSFileManager class], @selector(fileExistsAtPath:isDirectory:),
                      (IMP)h_fED, (IMP *)&o_fED);
     HK::swizzleClass([UIApplication class], @selector(canOpenURL:),
                      (IMP)h_cOU, (IMP *)&o_cOU);
+
     HK::rebind("SecCodeCheckValidity",                 (void *)h_SecCV,   (void **)&o_SecCV);
     HK::rebind("SecCodeCheckValidityWithErrors",       (void *)h_SecCVWE, (void **)&o_SecCVWE);
     HK::rebind("SecStaticCodeCheckValidity",           (void *)h_SecSCV,  (void **)&o_SecSCV);
     HK::rebind("SecStaticCodeCheckValidityWithErrors", (void *)h_SecSCVWE,(void **)&o_SecSCVWE);
     HK::rebind("SecCodeCopySigningInformation",        (void *)h_SecCSI,  (void **)&o_SecCSI);
-    LOGI("Bypass installed");
+
+    HK::rebindInImage(mainHdr, mainSlide, "_dyld_image_count",
+                      (void*)h_dyld_count, (void**)&o_dyld_count);
+    HK::rebindInImage(mainHdr, mainSlide, "_dyld_get_image_name",
+                      (void*)h_dyld_name,  (void**)&o_dyld_name);
+    HK::rebindInImage(mainHdr, mainSlide, "_dyld_get_image_header",
+                      (void*)h_dyld_hdr,   (void**)&o_dyld_hdr);
+    HK::rebindInImage(mainHdr, mainSlide, "_dyld_get_image_vmaddr_slide",
+                      (void*)h_dyld_slide, (void**)&o_dyld_slide);
+
+    LOGI("installed");
 }
 
 }

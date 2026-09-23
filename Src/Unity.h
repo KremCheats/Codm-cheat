@@ -4,8 +4,7 @@
 namespace Unity {
 bool init();
 const char* statusMessage();
-uintptr_t frameworkBase();
+uintptr_t mainBase();
 int resolvedSymbols();
-int classCount();
 }
 #endif
