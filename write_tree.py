@@ -63,8 +63,9 @@ w("Src/Common.h", r"""
 w("Src/fishhook.h", r"""
 #ifndef fishhook_h
 #define fishhook_h
-#include <stddef.h>
-#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <dlfcn.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
