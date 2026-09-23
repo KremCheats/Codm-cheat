@@ -51,17 +51,14 @@ static int make_writable(void *addr, size_t size) {
     uintptr_t page_start = start & ~(pg - 1);
     uintptr_t page_end = (end + pg - 1) & ~(pg - 1);
     size_t len = (size_t)(page_end - page_start);
-
     kern_return_t kr = vm_protect(mach_task_self(), (vm_address_t)page_start,
                                   (vm_size_t)len, false,
                                   VM_PROT_READ | VM_PROT_WRITE);
     if (kr == KERN_SUCCESS) return 0;
-
     kr = vm_protect(mach_task_self(), (vm_address_t)page_start,
                     (vm_size_t)len, false,
                     VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
     if (kr == KERN_SUCCESS) return 0;
-
     if (mprotect((void *)page_start, len, PROT_READ | PROT_WRITE) == 0) return 0;
     return -1;
 }
@@ -72,10 +69,8 @@ static void perform_rebinding_with_section(struct rebindings_entry *rebindings,
                                             uint32_t *indirect_symtab) {
     uint32_t *indirect_symbol_indices = indirect_symtab + section->reserved1;
     void **indirect_symbol_bindings = (void **)((uintptr_t)slide + section->addr);
-
     if (section->size == 0) return;
     make_writable(indirect_symbol_bindings, section->size);
-
     for (uint i = 0; i < section->size / sizeof(void *); i++) {
         uint32_t symtab_index = indirect_symbol_indices[i];
         if (symtab_index == INDIRECT_SYMBOL_ABS || symtab_index == INDIRECT_SYMBOL_LOCAL ||

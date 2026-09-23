@@ -25,7 +25,7 @@ static const char *kSuspect[] = {
     "CODMCheat", "frida", "Frida", "gum-js", "gadget", "cycript",
     "CydiaSubstrate", "MobileSubstrate", "Substrate", "libhooker",
     "ElleKit", "ellekit", "substitute", "Substitute", "TweakInject",
-    "cynject", ".mahi", NULL
+    "cynject", NULL
 };
 static inline bool isSuspect(const char *p) {
     if (!p) return false;
@@ -36,18 +36,12 @@ static inline bool isSuspect(const char *p) {
 
 static const char *kJbPaths[] = {
     "/Applications/Cydia.app", "/Applications/Sileo.app", "/Applications/Zebra.app",
-    "/Applications/Filza.app", "/Applications/Installer.app",
-    "/Library/MobileSubstrate", "/Library/MobileSubstrate/MobileSubstrate.dylib",
-    "/Library/MobileSubstrate/DynamicLibraries", "/Library/Substrate", "/Library/Themes",
+    "/Applications/Filza.app", "/Library/MobileSubstrate", "/Library/Substrate",
     "/bin/bash", "/bin/sh", "/bin/zsh",
     "/usr/sbin/sshd", "/usr/bin/ssh", "/usr/bin/sshd",
-    "/usr/libexec/sftp-server", "/usr/libexec/ssh-keysign",
-    "/etc/apt", "/etc/ssh/sshd_config", "/private/etc/apt",
+    "/etc/apt", "/etc/ssh/sshd_config",
     "/private/var/lib/apt", "/private/var/lib/cydia", "/private/var/stash",
-    "/private/var/tmp/cydia.log", "/private/var/mobile/Library/SBSettings/Themes",
-    "/var/cache/apt", "/var/lib/dpkg", "/var/lib/cydia",
     "/var/jb", "/var/jb/usr/bin/ssh", "/var/jb/Library/MobileSubstrate",
-    "/var/jb/Applications/Sileo.app", "/var/jb/Applications/Zebra.app",
     NULL
 };
 static inline bool isJbPath(const char *p) {
@@ -108,11 +102,6 @@ static int h_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
     return r;
 }
 
-// --- dyld virtualization ---
-// IMPORTANT: inside each hook, use the SAVED original (o_*) — calling the
-// raw _dyld_* symbol would recurse because that symbol is what we just
-// rebound to ourselves.
-
 static uint32_t (*o_dyld_count)(void);
 static const char *(*o_dyld_name)(uint32_t);
 static const struct mach_header *(*o_dyld_hdr)(uint32_t);
@@ -138,8 +127,8 @@ static const char *h_dyld_name(uint32_t idx) {
     return o_dyld_name(idx);
 }
 
-LevelAlertstatic const struct mach_header * +h_dyld_hdr (uint32_t idx) {
-    uint32_t real =100 o_dyld_count();
+static const struct mach_header *h_dyld_hdr(uint32_t idx) {
+    uint32_t real = o_dyld_count();
     uint32_t seen = 0;
     for (uint32_t i = 0; i < real; i++) {
         const char *nm = o_dyld_name(i);
@@ -214,16 +203,14 @@ static BOOL (*o_cOU)(UIApplication *, SEL, NSURL *);
 static BOOL h_cOU(UIApplication *s, SEL c, NSURL *u) {
     NSString *sc = [[u scheme] lowercaseString];
     if ([sc isEqualToString:@"cydia"] || [sc isEqualToString:@"sileo"] ||
-        [sc isEqualToString:@"zbra"]  || [sc isEqualToString:@"filza"] ||
-        [sc isEqualToString:@"undecimus"] || [sc isEqualToString:@"checkra1n"])
-        return NO;
+        [sc isEqualToString:@"zbra"]  || [sc isEqualToString:@"filza"]) return NO;
     return o_cOU(s, c, u);
 }
 
 namespace Bypass {
 
 void install() {
-    LOGI("Bypass installing (fishhook)");
+    LOGI("Bypass installing");
     HK::rebind("fopen",   (void *)h_fopen,   (void **)&o_fopen);
     HK::rebind("stat",    (void *)h_stat,    (void **)&o_stat);
     HK::rebind("lstat",   (void *)h_lstat,   (void **)&o_lstat);
@@ -240,8 +227,6 @@ void install() {
     HK::swizzleClass([UIApplication class], @selector(canOpenURL:),
                      (IMP)h_cOU, (IMP *)&o_cOU);
 
-    // dyld — these MUST be rebound AFTER we've stored all the originals
-    // because the hooks call each other's saved originals internally.
     HK::rebind("_dyld_image_count",             (void *)h_dyld_count, (void **)&o_dyld_count);
     HK::rebind("_dyld_get_image_name",          (void *)h_dyld_name,  (void **)&o_dyld_name);
     HK::rebind("_dyld_get_image_header",        (void *)h_dyld_hdr,   (void **)&o_dyld_hdr);
