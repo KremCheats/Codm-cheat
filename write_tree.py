@@ -43,10 +43,7 @@ static void CODMCheatEntry(void) {
     @autoreleasepool {
         if (!isCODM()) return;
         LOGI("CODMCheat entry (non-JB)");
-
-        // Fire the bypass BEFORE Unity / ACE has a chance to scan.
         Bypass::install();
-
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
             [[Cheat shared] start];
@@ -118,7 +115,7 @@ w("Src/Bypass.mm", r"""
 #import "Common.h"
 #import "Hooks.h"
 #import <sys/stat.h>
-#import <sys/ptrace.h>
+#import <sys/sysctl.h>
 #import <dlfcn.h>
 #import <dirent.h>
 #import <errno.h>
@@ -131,7 +128,12 @@ w("Src/Bypass.mm", r"""
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
-// Names/substrings that ACE scans for in the dyld list and in loaded images.
+// ptrace is not shipped in the iOS SDK headers — declare it ourselves.
+#ifndef PT_DENY_ATTACH
+#define PT_DENY_ATTACH 0x1f
+#endif
+extern "C" int ptrace(int request, pid_t pid, caddr_t addr, int data);
+
 static const char *kSuspect[] = {
     "CODMCheat", "frida", "Frida", "gum-js", "gadget", "cycript",
     "CydiaSubstrate", "MobileSubstrate", "Substrate", "libhooker",
@@ -146,7 +148,6 @@ static inline bool isSuspect(const char *p) {
     return false;
 }
 
-// Paths that scream jailbreak. We fake ENOENT for stat/access/open on all of them.
 static const char *kJbPaths[] = {
     "/Applications/Cydia.app", "/Applications/Sileo.app", "/Applications/Zebra.app",
     "/Applications/Filza.app", "/Applications/Installer.app",
@@ -171,22 +172,15 @@ static inline bool isJbPath(const char *p) {
     return isSuspect(p);
 }
 
-// ─────────────────────────────────────────────────────────────
-// 1. Scrub our own LC_LOAD_DYLIB from the main binary's in-memory
-//    load commands. ACE walks the header; if we're not there, we
-//    don't exist.
-// ─────────────────────────────────────────────────────────────
 namespace Bypass {
 
 void scrubMainBinaryLoadCommands() {
     const struct mach_header_64 *hdr =
         (const struct mach_header_64 *)_dyld_get_image_header(0);
     if (!hdr) return;
-
     uint8_t *base = (uint8_t *)hdr;
     struct load_command *lc =
         (struct load_command *)(base + sizeof(struct mach_header_64));
-
     for (uint32_t i = 0; i < hdr->ncmds && lc; i++) {
         uint32_t cmd = lc->cmd;
         if (cmd == LC_LOAD_DYLIB || cmd == LC_LOAD_WEAK_DYLIB || cmd == LC_REEXPORT_DYLIB) {
@@ -204,41 +198,33 @@ void scrubMainBinaryLoadCommands() {
     }
 }
 
-} // namespace Bypass
+}
 
-// ─────────────────────────────────────────────────────────────
-// 2. libc hooks
-// ─────────────────────────────────────────────────────────────
 static FILE *(*o_fopen)(const char *, const char *);
 static FILE *h_fopen(const char *p, const char *m) {
     if (isJbPath(p)) { errno = ENOENT; return NULL; }
     return o_fopen(p, m);
 }
-
 static int (*o_stat)(const char *, struct stat *);
 static int h_stat(const char *p, struct stat *b) {
     if (isJbPath(p)) { errno = ENOENT; return -1; }
     return o_stat(p, b);
 }
-
 static int (*o_lstat)(const char *, struct stat *);
 static int h_lstat(const char *p, struct stat *b) {
     if (isJbPath(p)) { errno = ENOENT; return -1; }
     return o_lstat(p, b);
 }
-
 static int (*o_access)(const char *, int);
 static int h_access(const char *p, int mode) {
     if (isJbPath(p)) { errno = ENOENT; return -1; }
     return o_access(p, mode);
 }
-
 static DIR *(*o_opendir)(const char *);
 static DIR *h_opendir(const char *p) {
     if (isJbPath(p)) { errno = ENOENT; return NULL; }
     return o_opendir(p);
 }
-
 static char *(*o_getenv)(const char *);
 static char *h_getenv(const char *name) {
     if (!name) return NULL;
@@ -248,9 +234,6 @@ static char *h_getenv(const char *name) {
     return o_getenv(name);
 }
 
-// ─────────────────────────────────────────────────────────────
-// 3. ptrace / sysctl
-// ─────────────────────────────────────────────────────────────
 static int (*o_ptrace)(int, pid_t, caddr_t, int);
 static int h_ptrace(int req, pid_t pid, caddr_t a, int d) {
     if (req == PT_DENY_ATTACH) return 0;
@@ -262,8 +245,6 @@ static int h_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
                     void *newp, size_t newlen) {
     int r = o_sysctl(name, namelen, oldp, oldlenp, newp, newlen);
     if (r != 0 || !name || !oldp) return r;
-
-    // Mask debugger flag so ACE's P_TRACED check returns clean.
     if (namelen >= 4 && name[0] == CTL_KERN && name[1] == KERN_PROC &&
         (name[2] == KERN_PROC_PID || name[2] == KERN_PROC_PROC)) {
         struct kinfo_proc *kp = (struct kinfo_proc *)oldp;
@@ -272,10 +253,6 @@ static int h_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
     return r;
 }
 
-// ─────────────────────────────────────────────────────────────
-// 4. dyld virtualization
-//    Instead of shifting indices, filter suspect images out.
-// ─────────────────────────────────────────────────────────────
 static uint32_t (*o_dyld_count)(void);
 static uint32_t h_dyld_count(void) {
     uint32_t real = o_dyld_count();
@@ -284,7 +261,6 @@ static uint32_t h_dyld_count(void) {
         if (isSuspect(_dyld_get_image_name(i))) hide++;
     return real - hide;
 }
-
 static const char *(*o_dyld_name)(uint32_t);
 static const char *h_dyld_name(uint32_t idx) {
     uint32_t real = o_dyld_count();
@@ -297,7 +273,6 @@ static const char *h_dyld_name(uint32_t idx) {
     }
     return o_dyld_name(idx);
 }
-
 static const struct mach_header *(*o_dyld_hdr)(uint32_t);
 static const struct mach_header *h_dyld_hdr(uint32_t idx) {
     uint32_t real = o_dyld_count();
@@ -310,7 +285,6 @@ static const struct mach_header *h_dyld_hdr(uint32_t idx) {
     }
     return o_dyld_hdr(idx);
 }
-
 static intptr_t (*o_dyld_slide)(uint32_t);
 static intptr_t h_dyld_slide(uint32_t idx) {
     uint32_t real = o_dyld_count();
@@ -323,7 +297,6 @@ static intptr_t h_dyld_slide(uint32_t idx) {
     }
     return o_dyld_slide(idx);
 }
-
 static int (*o_dladdr)(const void *, Dl_info *);
 static int h_dladdr(const void *addr, Dl_info *info) {
     int r = o_dladdr(addr, info);
@@ -336,31 +309,24 @@ static int h_dladdr(const void *addr, Dl_info *info) {
     return r;
 }
 
-// ─────────────────────────────────────────────────────────────
-// 5. Security framework — lie about code signing.
-// ─────────────────────────────────────────────────────────────
 static OSStatus (*o_SecCV)(SecCodeRef, SecCSFlags, SecRequirementRef);
 static OSStatus h_SecCV(SecCodeRef c, SecCSFlags f, SecRequirementRef r) {
     return errSecSuccess;
 }
-
 static OSStatus (*o_SecCVWE)(SecCodeRef, SecCSFlags, SecRequirementRef, CFErrorRef *);
 static OSStatus h_SecCVWE(SecCodeRef c, SecCSFlags f, SecRequirementRef r, CFErrorRef *e) {
     if (e) *e = NULL;
     return errSecSuccess;
 }
-
 static OSStatus (*o_SecSCV)(SecStaticCodeRef, SecCSFlags, SecRequirementRef);
 static OSStatus h_SecSCV(SecStaticCodeRef c, SecCSFlags f, SecRequirementRef r) {
     return errSecSuccess;
 }
-
 static OSStatus (*o_SecSCVWE)(SecStaticCodeRef, SecCSFlags, SecRequirementRef, CFErrorRef *);
 static OSStatus h_SecSCVWE(SecStaticCodeRef c, SecCSFlags f, SecRequirementRef r, CFErrorRef *e) {
     if (e) *e = NULL;
     return errSecSuccess;
 }
-
 static OSStatus (*o_SecCSI)(SecCodeRef, SecCSFlags, CFDictionaryRef *);
 static OSStatus h_SecCSI(SecCodeRef code, SecCSFlags flags, CFDictionaryRef *info) {
     OSStatus r = o_SecCSI(code, flags, info);
@@ -375,21 +341,16 @@ static OSStatus h_SecCSI(SecCodeRef code, SecCSFlags flags, CFDictionaryRef *inf
     return r;
 }
 
-// ─────────────────────────────────────────────────────────────
-// 6. Obj-C — NSFileManager & UIApplication
-// ─────────────────────────────────────────────────────────────
 static BOOL (*o_fE)(NSFileManager *, SEL, NSString *);
 static BOOL h_fE(NSFileManager *s, SEL c, NSString *p) {
     if (isJbPath([p UTF8String])) return NO;
     return o_fE(s, c, p);
 }
-
 static BOOL (*o_fED)(NSFileManager *, SEL, NSString *, BOOL *);
 static BOOL h_fED(NSFileManager *s, SEL c, NSString *p, BOOL *d) {
     if (isJbPath([p UTF8String])) { if (d) *d = NO; return NO; }
     return o_fED(s, c, p, d);
 }
-
 static BOOL (*o_cOU)(UIApplication *, SEL, NSURL *);
 static BOOL h_cOU(UIApplication *s, SEL c, NSURL *u) {
     NSString *sc = [[u scheme] lowercaseString];
@@ -400,18 +361,12 @@ static BOOL h_cOU(UIApplication *s, SEL c, NSURL *u) {
     return o_cOU(s, c, u);
 }
 
-// ─────────────────────────────────────────────────────────────
-// 7. install — hook everything with Dobby (no Substrate).
-// ─────────────────────────────────────────────────────────────
 namespace Bypass {
 
 void install() {
     LOGI("Bypass (non-JB) installing...");
-
-    // Our own load command scrubbed from the main binary header.
     scrubMainBinaryLoadCommands();
 
-    // libc
     HK::installSym("fopen",   (void *)h_fopen,   (void **)&o_fopen);
     HK::installSym("stat",    (void *)h_stat,    (void **)&o_stat);
     HK::installSym("lstat",   (void *)h_lstat,   (void **)&o_lstat);
@@ -419,11 +374,9 @@ void install() {
     HK::installSym("opendir", (void *)h_opendir, (void **)&o_opendir);
     HK::installSym("getenv",  (void *)h_getenv,  (void **)&o_getenv);
 
-    // process
     HK::installSym("ptrace",  (void *)h_ptrace,  (void **)&o_ptrace);
     HK::installSym("sysctl",  (void *)h_sysctl,  (void **)&o_sysctl);
 
-    // objc
     HK::swizzleClass([NSFileManager class], @selector(fileExistsAtPath:),
                      (IMP)h_fE, (IMP *)&o_fE);
     HK::swizzleClass([NSFileManager class], @selector(fileExistsAtPath:isDirectory:),
@@ -431,14 +384,12 @@ void install() {
     HK::swizzleClass([UIApplication class], @selector(canOpenURL:),
                      (IMP)h_cOU, (IMP *)&o_cOU);
 
-    // dyld
     HK::installSym("_dyld_image_count",             (void *)h_dyld_count, (void **)&o_dyld_count);
     HK::installSym("_dyld_get_image_name",          (void *)h_dyld_name,  (void **)&o_dyld_name);
     HK::installSym("_dyld_get_image_header",        (void *)h_dyld_hdr,   (void **)&o_dyld_hdr);
     HK::installSym("_dyld_get_image_vmaddr_slide",  (void *)h_dyld_slide, (void **)&o_dyld_slide);
     HK::installSym("dladdr",                        (void *)h_dladdr,     (void **)&o_dladdr);
 
-    // Security framework
     HK::installSym("SecCodeCheckValidity",                 (void *)h_SecCV,   (void **)&o_SecCV);
     HK::installSym("SecCodeCheckValidityWithErrors",       (void *)h_SecCVWE, (void **)&o_SecCVWE);
     HK::installSym("SecStaticCodeCheckValidity",           (void *)h_SecSCV,  (void **)&o_SecSCV);
@@ -448,7 +399,7 @@ void install() {
     LOGI("Bypass (non-JB) installed");
 }
 
-} // namespace Bypass
+}
 """)
 
 w("Src/Overlay.h", r"""
@@ -539,4 +490,4 @@ w("Src/Cheat.mm", r"""
 @end
 """)
 
-print("wrote project tree with bypass")
+print("wrote tree with bypass")
