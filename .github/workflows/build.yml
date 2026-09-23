@@ -20,7 +20,14 @@ jobs:
           echo "THEOS=$HOME/theos" >> $GITHUB_ENV
           [ -n "$(ls -A "$HOME/theos/sdks" 2>/dev/null)" ] || "$HOME/theos/bin/install-sdk" || true
       - name: Generate
-        run: python3 write_tree.py
+        run: |
+          if [ -f write_tree.py ]; then
+            python3 write_tree.py
+          elif [ -f write-tree.py ]; then
+            python3 write-tree.py
+          else
+            echo "no generator found"; ls -la; exit 1
+          fi
       - name: Commit back
         run: |
           git config user.name "bot"
@@ -35,9 +42,11 @@ jobs:
           fi
           rm -rf vendor/dobby
           git clone --depth 1 --recursive https://github.com/jmpews/Dobby.git /tmp/dobby
+          git clone --depth 1 https://github.com/leetal/ios-cmake /tmp/ios-cmake
           mkdir -p /tmp/dobby/build && cd /tmp/dobby/build
           cmake /tmp/dobby \
-            -DCMAKE_TOOLCHAIN_FILE=/tmp/dobby/cmake/ios.toolchain.cmake \
+            -DCMAKE_TOOLCHAIN_FILE=/tmp/ios-cmake/ios.toolchain.cmake \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
             -DPLATFORM=OS64 -DARCHS=arm64 -DCMAKE_SYSTEM_PROCESSOR=arm64 \
             -DENABLE_BITCODE=0 -DENABLE_ARC=0 -DENABLE_VISIBILITY=1 \
             -DDEPLOYMENT_TARGET=14.0 -DDynamicBinaryInstrument=ON -DNearBranch=ON \
