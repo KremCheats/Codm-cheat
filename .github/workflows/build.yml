@@ -36,13 +36,15 @@ jobs:
 
       - name: Vendor fishhook
         run: |
+          mkdir -p vendor/fishhook
           git clone --depth 1 https://github.com/facebook/fishhook /tmp/fh
           cp /tmp/fh/fishhook.c /tmp/fh/fishhook.h vendor/fishhook/
 
       - name: Build Dobby
         run: |
+          mkdir -p vendor/dobby/build
           git clone --depth 1 --recursive https://github.com/jmpews/Dobby.git vendor/dobby
-          mkdir -p vendor/dobby/build && cd vendor/dobby/build
+          cd vendor/dobby/build
           cmake .. \
             -DCMAKE_TOOLCHAIN_FILE=../cmake/ios.toolchain.cmake \
             -DPLATFORM=OS64 -DARCHS=arm64 -DCMAKE_SYSTEM_PROCESSOR=arm64 \
@@ -65,7 +67,7 @@ jobs:
         run: |
           mkdir -p dist
           SRC=$(find .theos/obj -name CODMCheat.dylib | head -n1)
-          [[ -n "$SRC" ]] || { echo "no dylib"; exit 1; }
+          [[ -n "$SRC" ]] || { echo "no dylib produced"; find .theos -name "*.dylib" -o -name "*.a" 2>/dev/null | head -n30; exit 1; }
           cp "$SRC" dist/CODMCheat.dylib
           lipo -info dist/CODMCheat.dylib
 
@@ -73,3 +75,4 @@ jobs:
         with:
           name: CODMCheat-dylib
           path: dist/CODMCheat.dylib
+          if-no-files-found: error
