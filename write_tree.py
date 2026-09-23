@@ -63,9 +63,8 @@ w("Src/Common.h", r"""
 w("Src/fishhook.h", r"""
 #ifndef fishhook_h
 #define fishhook_h
-#include <stdlib.h>
-#include <string.h>
-#include <dlfcn.h>
+#include <stddef.h>
+#include <stdint.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -84,10 +83,13 @@ int rebind_symbols(struct rebinding rebindings[], size_t rebindings_nel);
 w("Src/fishhook.c", r"""
 #include <stdlib.h>
 #include <string.h>
+#include <dlfcn.h>
 #include <sys/mman.h>
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
 #include <mach-o/nlist.h>
+#include <mach/mach.h>
+#include <mach/vm_map.h>
 #include "fishhook.h"
 
 #ifdef __LP64__
@@ -131,6 +133,23 @@ static void perform_rebinding_with_section(struct rebindings_entry *rebindings,
                                             uint32_t *indirect_symtab) {
     uint32_t *indirect_symbol_indices = indirect_symtab + section->reserved1;
     void **indirect_symbol_bindings = (void **)((uintptr_t)slide + section->addr);
+
+    // iOS 15+ keeps __DATA_CONST mapped read-only. Make the pages writable
+    // for the duration of the rebind. VM_PROT_COPY forces a COW snapshot
+    // so the original image on disk isn't touched.
+    if (section->size > 0) {
+        uintptr_t start = (uintptr_t)indirect_symbol_bindings;
+        uintptr_t end = start + section->size;
+        uintptr_t page_mask = ~(uintptr_t)(vm_page_size - 1);
+        uintptr_t page_start = start & page_mask;
+        uintptr_t page_end = (end + vm_page_size - 1) & page_mask;
+        vm_protect(mach_task_self(),
+                   (vm_address_t)page_start,
+                   (vm_size_t)(page_end - page_start),
+                   false,
+                   VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
+    }
+
     for (uint i = 0; i < section->size / sizeof(void *); i++) {
         uint32_t symtab_index = indirect_symbol_indices[i];
         if (symtab_index == INDIRECT_SYMBOL_ABS || symtab_index == INDIRECT_SYMBOL_LOCAL ||
@@ -607,4 +626,4 @@ w("Src/Cheat.mm", r"""
 @end
 """)
 
-print("wrote fishhook tree")
+print("wrote fishhook tree with vm_protect")
