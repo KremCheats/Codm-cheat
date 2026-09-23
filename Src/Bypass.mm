@@ -102,62 +102,6 @@ static int h_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
     return r;
 }
 
-// --- dyld originals captured at boot, before any rebinding ---
-static uint32_t (*o_dyld_count)(void) = NULL;
-static const char *(*o_dyld_name)(uint32_t) = NULL;
-static const struct mach_header *(*o_dyld_hdr)(uint32_t) = NULL;
-static intptr_t (*o_dyld_slide)(uint32_t) = NULL;
-
-// Expose them to fishhook.c via extern symbols (defined below).
-extern "C" uint32_t (*HK_safe_dyld_count)(void) = NULL;
-extern "C" const char *(*HK_safe_dyld_name)(uint32_t) = NULL;
-extern "C" const struct mach_header *(*HK_safe_dyld_hdr)(uint32_t) = NULL;
-extern "C" intptr_t (*HK_safe_dyld_slide)(uint32_t) = NULL;
-
-static uint32_t h_dyld_count(void) {
-    uint32_t real = o_dyld_count();
-    uint32_t hide = 0;
-    for (uint32_t i = 0; i < real; i++)
-        if (isSuspect(o_dyld_name(i))) hide++;
-    return real - hide;
-}
-
-static const char *h_dyld_name(uint32_t idx) {
-    uint32_t real = o_dyld_count();
-    uint32_t seen = 0;
-    for (uint32_t i = 0; i < real; i++) {
-        const char *nm = o_dyld_name(i);
-        if (isSuspect(nm)) continue;
-        if (seen == idx) return nm;
-        seen++;
-    }
-    return o_dyld_name(idx);
-}
-
-static const struct mach_header *h_dyld_hdr(uint32_t idx) {
-    uint32_t real = o_dyld_count();
-    uint32_t seen = 0;
-    for (uint32_t i = 0; i < real; i++) {
-        const char *nm = o_dyld_name(i);
-        if (isSuspect(nm)) continue;
-        if (seen == idx) return o_dyld_hdr(i);
-        seen++;
-    }
-    return o_dyld_hdr(idx);
-}
-
-static intptr_t h_dyld_slide(uint32_t idx) {
-    uint32_t real = o_dyld_count();
-    uint32_t seen = 0;
-    for (uint32_t i = 0; i < real; i++) {
-        const char *nm = o_dyld_name(i);
-        if (isSuspect(nm)) continue;
-        if (seen == idx) return o_dyld_slide(i);
-        seen++;
-    }
-    return o_dyld_slide(idx);
-}
-
 static int (*o_dladdr)(const void *, Dl_info *);
 static int h_dladdr(const void *addr, Dl_info *info) {
     int r = o_dladdr(addr, info);
@@ -219,28 +163,20 @@ namespace Bypass {
 void install() {
     LOGI("Bypass installing");
 
-    // --- CRITICAL: pre-capture dyld originals BEFORE any rebind ---
-    o_dyld_count = (uint32_t(*)(void))dlsym(RTLD_DEFAULT, "_dyld_image_count");
-    o_dyld_name  = (const char*(*)(uint32_t))dlsym(RTLD_DEFAULT, "_dyld_get_image_name");
-    o_dyld_hdr   = (const struct mach_header*(*)(uint32_t))dlsym(RTLD_DEFAULT, "_dyld_get_image_header");
-    o_dyld_slide = (intptr_t(*)(uint32_t))dlsym(RTLD_DEFAULT, "_dyld_get_image_vmaddr_slide");
-    o_dladdr     = (int(*)(const void*, Dl_info*))dlsym(RTLD_DEFAULT, "dladdr");
-
-    // Publish to fishhook.c
-    HK_safe_dyld_count = o_dyld_count;
-    HK_safe_dyld_name  = o_dyld_name;
-    HK_safe_dyld_hdr   = o_dyld_hdr;
-    HK_safe_dyld_slide = o_dyld_slide;
-
+    // libc
     HK::rebind("fopen",   (void *)h_fopen,   (void **)&o_fopen);
     HK::rebind("stat",    (void *)h_stat,    (void **)&o_stat);
     HK::rebind("lstat",   (void *)h_lstat,   (void **)&o_lstat);
     HK::rebind("access",  (void *)h_access,  (void **)&o_access);
     HK::rebind("opendir", (void *)h_opendir, (void **)&o_opendir);
     HK::rebind("getenv",  (void *)h_getenv,  (void **)&o_getenv);
+
+    // process
     HK::rebind("ptrace",  (void *)h_ptrace,  (void **)&o_ptrace);
     HK::rebind("sysctl",  (void *)h_sysctl,  (void **)&o_sysctl);
+    HK::rebind("dladdr",  (void *)h_dladdr,  (void **)&o_dladdr);
 
+    // objc
     HK::swizzleClass([NSFileManager class], @selector(fileExistsAtPath:),
                      (IMP)h_fE, (IMP *)&o_fE);
     HK::swizzleClass([NSFileManager class], @selector(fileExistsAtPath:isDirectory:),
@@ -248,12 +184,7 @@ void install() {
     HK::swizzleClass([UIApplication class], @selector(canOpenURL:),
                      (IMP)h_cOU, (IMP *)&o_cOU);
 
-    HK::rebind("_dyld_image_count",             (void *)h_dyld_count, (void **)&o_dyld_count);
-    HK::rebind("_dyld_get_image_name",          (void *)h_dyld_name,  (void **)&o_dyld_name);
-    HK::rebind("_dyld_get_image_header",        (void *)h_dyld_hdr,   (void **)&o_dyld_hdr);
-    HK::rebind("_dyld_get_image_vmaddr_slide",  (void *)h_dyld_slide, (void **)&o_dyld_slide);
-    HK::rebind("dladdr",                        (void *)h_dladdr,     (void **)&o_dladdr);
-
+    // code signing
     HK::rebind("SecCodeCheckValidity",                 (void *)h_SecCV,   (void **)&o_SecCV);
     HK::rebind("SecCodeCheckValidityWithErrors",       (void *)h_SecCVWE, (void **)&o_SecCVWE);
     HK::rebind("SecStaticCodeCheckValidity",           (void *)h_SecSCV,  (void **)&o_SecSCV);

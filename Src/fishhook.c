@@ -146,34 +146,16 @@ static void _rebind_symbols_for_image(const struct mach_header *header, intptr_t
     rebind_symbols_for_image(_rebindings_head, header, slide);
 }
 
-// Safe replacement for the else branch — uses pre-captured originals if the
-// raw symbol has been rebound.
-extern uint32_t (*HK_safe_dyld_count)(void);
-extern const char *(*HK_safe_dyld_name)(uint32_t);
-extern const struct mach_header *(*HK_safe_dyld_hdr)(uint32_t);
-extern intptr_t (*HK_safe_dyld_slide)(uint32_t);
-
 int rebind_symbols(struct rebinding rebindings[], size_t rebindings_nel) {
     int retval = prepend_rebindings(&_rebindings_head, rebindings, rebindings_nel);
     if (retval < 0) return retval;
     if (!_rebindings_head->next) {
         _dyld_register_func_for_add_image(_rebind_symbols_for_image);
     } else {
-        // Use safe accessors if available, otherwise fall back to raw symbols.
-        uint32_t c = 0;
-        if (HK_safe_dyld_count) c = HK_safe_dyld_count();
-        else c = _dyld_image_count();
+        uint32_t c = _dyld_image_count();
         for (uint32_t i = 0; i < c; i++) {
-            const struct mach_header *h = NULL;
-            intptr_t s = 0;
-            if (HK_safe_dyld_hdr && HK_safe_dyld_slide) {
-                h = HK_safe_dyld_hdr(i);
-                s = HK_safe_dyld_slide(i);
-            } else {
-                h = _dyld_get_image_header(i);
-                s = _dyld_get_image_vmaddr_slide(i);
-            }
-            _rebind_symbols_for_image(h, s);
+            _rebind_symbols_for_image(_dyld_get_image_header(i),
+                                      _dyld_get_image_vmaddr_slide(i));
         }
     }
     return retval;

@@ -13,7 +13,7 @@
     LOGI("Cheat::start");
     dispatch_async(dispatch_get_main_queue(), ^{
         [[CheatOverlay shared] attach];
-        [[CheatOverlay shared] setInfoText:@"CODM (non-JB)\nfishhook bypass active"];
+        [[CheatOverlay shared] setInfoText:@"CODM (non-JB)\nbypass active"];
     });
 }
 - (void)stop {}
