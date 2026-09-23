@@ -102,10 +102,17 @@ static int h_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
     return r;
 }
 
-static uint32_t (*o_dyld_count)(void);
-static const char *(*o_dyld_name)(uint32_t);
-static const struct mach_header *(*o_dyld_hdr)(uint32_t);
-static intptr_t (*o_dyld_slide)(uint32_t);
+// --- dyld originals captured at boot, before any rebinding ---
+static uint32_t (*o_dyld_count)(void) = NULL;
+static const char *(*o_dyld_name)(uint32_t) = NULL;
+static const struct mach_header *(*o_dyld_hdr)(uint32_t) = NULL;
+static intptr_t (*o_dyld_slide)(uint32_t) = NULL;
+
+// Expose them to fishhook.c via extern symbols (defined below).
+extern "C" uint32_t (*HK_safe_dyld_count)(void) = NULL;
+extern "C" const char *(*HK_safe_dyld_name)(uint32_t) = NULL;
+extern "C" const struct mach_header *(*HK_safe_dyld_hdr)(uint32_t) = NULL;
+extern "C" intptr_t (*HK_safe_dyld_slide)(uint32_t) = NULL;
 
 static uint32_t h_dyld_count(void) {
     uint32_t real = o_dyld_count();
@@ -211,6 +218,20 @@ namespace Bypass {
 
 void install() {
     LOGI("Bypass installing");
+
+    // --- CRITICAL: pre-capture dyld originals BEFORE any rebind ---
+    o_dyld_count = (uint32_t(*)(void))dlsym(RTLD_DEFAULT, "_dyld_image_count");
+    o_dyld_name  = (const char*(*)(uint32_t))dlsym(RTLD_DEFAULT, "_dyld_get_image_name");
+    o_dyld_hdr   = (const struct mach_header*(*)(uint32_t))dlsym(RTLD_DEFAULT, "_dyld_get_image_header");
+    o_dyld_slide = (intptr_t(*)(uint32_t))dlsym(RTLD_DEFAULT, "_dyld_get_image_vmaddr_slide");
+    o_dladdr     = (int(*)(const void*, Dl_info*))dlsym(RTLD_DEFAULT, "dladdr");
+
+    // Publish to fishhook.c
+    HK_safe_dyld_count = o_dyld_count;
+    HK_safe_dyld_name  = o_dyld_name;
+    HK_safe_dyld_hdr   = o_dyld_hdr;
+    HK_safe_dyld_slide = o_dyld_slide;
+
     HK::rebind("fopen",   (void *)h_fopen,   (void **)&o_fopen);
     HK::rebind("stat",    (void *)h_stat,    (void **)&o_stat);
     HK::rebind("lstat",   (void *)h_lstat,   (void **)&o_lstat);
