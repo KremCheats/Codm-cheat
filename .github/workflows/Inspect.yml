@@ -9,31 +9,22 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check file
         run: |
-          echo "=== file exists ==="
           ls -la mystery.dylib || { echo "no mystery.dylib"; exit 1; }
       - name: lipo info
         run: lipo -info mystery.dylib || true
+      - name: cryptid
+        run: otool -l mystery.dylib | grep -A4 LC_ENCRYPTION_INFO || echo "no encryption info"
       - name: linked libraries
         run: otool -L mystery.dylib || true
-      - name: load commands
-        run: otool -l mystery.dylib | head -200 || true
-      - name: exported symbols
-        run: nm -gU mystery.dylib | head -400 || true
-      - name: all symbols
-        run: nm mystery.dylib 2>/dev/null | head -400 || true
-      - name: objc classes
-        run: otool -ov mystery.dylib 2>/dev/null | grep -E "name 0x|class name|methods" | head -300 || true
-      - name: interesting strings
-        run: |
-          echo "=== hooking framework hints ==="
-          strings mystery.dylib | grep -iE "fishhook|dobby|substrate|substitute|ellekit|libhooker|MSHook|method_set|rebind|trampoline|ljhooker" | head -50 || true
-          echo "=== dyld / anti-cheat related ==="
-          strings mystery.dylib | grep -E "_dyld_|dladdr|ptrace|sysctl|SecCode|SecStaticCode" | head -50 || true
-          echo "=== unity / il2cpp related ==="
-          strings mystery.dylib | grep -iE "il2cpp|unity|mono" | head -50 || true
-          echo "=== class names ==="
-          strings mystery.dylib | grep -iE "Player|GamePlayer|Camera|Character|Weapon|Aim|Esp|Bone" | head -80 || true
-          echo "=== urls / identifiers ==="
-          strings mystery.dylib | grep -iE "http|bundle|com\.|github" | head -40 || true
-          echo "=== all strings (first 800) ==="
-          strings -n 5 mystery.dylib | head -800 || true
+      - name: hooking framework hints
+        run: strings mystery.dylib | grep -iE "fishhook|dobby|substrate|substitute|ellekit|libhooker|MSHook|rebind|trampoline|ljhooker|CydiaSubstrate" | head -50 || true
+      - name: dyld anticheat
+        run: strings mystery.dylib | grep -E "_dyld_|dladdr|ptrace|sysctl|SecCode|SecStaticCode|jailbreak|cydia" | head -80 || true
+      - name: unity il2cpp
+        run: strings mystery.dylib | grep -iE "il2cpp|unity|mono_|gameassembly" | head -50 || true
+      - name: game classes
+        run: strings mystery.dylib | grep -iE "Player|GamePlayer|Camera|Character|Weapon|Bone|Hitbox|Skeleton|AimTarget" | head -120 || true
+      - name: function names from symbols
+        run: nm mystery.dylib 2>/dev/null | grep -iE "aim|esp|hook|bypass|wall|silent|recoil" | head -80 || true
+      - name: strings big list
+        run: strings -n 6 mystery.dylib | head -600 || true
