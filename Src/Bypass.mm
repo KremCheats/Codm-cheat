@@ -11,15 +11,21 @@
 #import <mach-o/dyld.h>
 #import <mach-o/loader.h>
 #import <mach/mach.h>
-#import <Security/Security.h>
+#import <libkern/OSCacheControl.h>
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
-// ptrace is not shipped in the iOS SDK headers — declare it ourselves.
 #ifndef PT_DENY_ATTACH
 #define PT_DENY_ATTACH 0x1f
 #endif
+#ifndef KERN_PROC_PROC
+#define KERN_PROC_PROC 2
+#endif
+
 extern "C" int ptrace(int request, pid_t pid, caddr_t addr, int data);
+
+// Use void* / uint32_t instead of Sec* types — no need to import Security headers.
+typedef int32_t SecStatus;
 
 static const char *kSuspect[] = {
     "CODMCheat", "frida", "Frida", "gum-js", "gadget", "cycript",
@@ -196,28 +202,27 @@ static int h_dladdr(const void *addr, Dl_info *info) {
     return r;
 }
 
-static OSStatus (*o_SecCV)(SecCodeRef, SecCSFlags, SecRequirementRef);
-static OSStatus h_SecCV(SecCodeRef c, SecCSFlags f, SecRequirementRef r) {
-    return errSecSuccess;
-}
-static OSStatus (*o_SecCVWE)(SecCodeRef, SecCSFlags, SecRequirementRef, CFErrorRef *);
-static OSStatus h_SecCVWE(SecCodeRef c, SecCSFlags f, SecRequirementRef r, CFErrorRef *e) {
+// Security — untyped refs, we don't need real headers.
+static SecStatus (*o_SecCV)(void *, uint32_t, void *);
+static SecStatus h_SecCV(void *c, uint32_t f, void *r) { return 0; }
+
+static SecStatus (*o_SecCVWE)(void *, uint32_t, void *, CFErrorRef *);
+static SecStatus h_SecCVWE(void *c, uint32_t f, void *r, CFErrorRef *e) {
     if (e) *e = NULL;
-    return errSecSuccess;
+    return 0;
 }
-static OSStatus (*o_SecSCV)(SecStaticCodeRef, SecCSFlags, SecRequirementRef);
-static OSStatus h_SecSCV(SecStaticCodeRef c, SecCSFlags f, SecRequirementRef r) {
-    return errSecSuccess;
-}
-static OSStatus (*o_SecSCVWE)(SecStaticCodeRef, SecCSFlags, SecRequirementRef, CFErrorRef *);
-static OSStatus h_SecSCVWE(SecStaticCodeRef c, SecCSFlags f, SecRequirementRef r, CFErrorRef *e) {
+static SecStatus (*o_SecSCV)(void *, uint32_t, void *);
+static SecStatus h_SecSCV(void *c, uint32_t f, void *r) { return 0; }
+
+static SecStatus (*o_SecSCVWE)(void *, uint32_t, void *, CFErrorRef *);
+static SecStatus h_SecSCVWE(void *c, uint32_t f, void *r, CFErrorRef *e) {
     if (e) *e = NULL;
-    return errSecSuccess;
+    return 0;
 }
-static OSStatus (*o_SecCSI)(SecCodeRef, SecCSFlags, CFDictionaryRef *);
-static OSStatus h_SecCSI(SecCodeRef code, SecCSFlags flags, CFDictionaryRef *info) {
-    OSStatus r = o_SecCSI(code, flags, info);
-    if (r == errSecSuccess && info && *info) {
+static SecStatus (*o_SecCSI)(void *, uint32_t, CFDictionaryRef *);
+static SecStatus h_SecCSI(void *code, uint32_t flags, CFDictionaryRef *info) {
+    SecStatus r = o_SecCSI(code, flags, info);
+    if (r == 0 && info && *info) {
         CFMutableDictionaryRef m = CFDictionaryCreateMutableCopy(NULL, 0, *info);
         CFDictionarySetValue(m, CFSTR("identifier"), CFSTR("com.activision.callofduty.shooter"));
         CFDictionarySetValue(m, CFSTR("flags"), CFSTR("0"));
