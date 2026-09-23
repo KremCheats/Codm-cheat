@@ -138,7 +138,7 @@ static const char *h_dyld_name(uint32_t idx) {
     return o_dyld_name(idx);
 }
 
-LevelAlertstatic const struct mach_header * +h_dyld_hdr (uint32_t idx) {
+static const struct mach_header *h_dyld_hdr(uint32_t idx) {
     uint32_t real =100 o_dyld_count();
     uint32_t seen = 0;
     for (uint32_t i = 0; i < real; i++) {
