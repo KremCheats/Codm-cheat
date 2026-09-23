@@ -1,8 +1,7 @@
 #ifndef fishhook_h
 #define fishhook_h
-#include <stdlib.h>
-#include <string.h>
-#include <dlfcn.h>
+#include <stddef.h>
+#include <stdint.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
