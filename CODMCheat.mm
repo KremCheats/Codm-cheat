@@ -18,8 +18,6 @@ static void CODMCheatEntry(void) {
         if (!isCODM()) return;
         LOGI("CODMCheat entry");
         Bypass::install();
-
-        // Start Cheat once, then let it manage its own scene-attach retries.
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
             [[Cheat shared] start];
