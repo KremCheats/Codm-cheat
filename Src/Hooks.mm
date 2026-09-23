@@ -1,14 +1,11 @@
 #import "Hooks.h"
-#import "Common.h"
 #import <dlfcn.h>
 #import <objc/runtime.h>
 #include <dobby.h>
 namespace HK {
 bool install(void *target, void *replacement, void **orig) {
     if (!target) return false;
-    int r = DobbyHook(target, replacement, orig);
-    if (r != 0) return false;
-    return true;
+    return DobbyHook(target, replacement, orig) == 0;
 }
 bool installSym(const char *sym, void *replacement, void **orig) {
     void *p = dlsym(RTLD_DEFAULT, sym);
