@@ -20,7 +20,7 @@ jobs:
           echo "THEOS=$HOME/theos" >> $GITHUB_ENV
           [ -n "$(ls -A "$HOME/theos/sdks" 2>/dev/null)" ] || "$HOME/theos/bin/install-sdk" || true
       - name: Generate
-        run: python3 dump.py
+        run: python3 write_tree.py
       - name: Commit back
         run: |
           git config user.name "bot"
