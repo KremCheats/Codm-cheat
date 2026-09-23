@@ -490,7 +490,6 @@ w("Src/Unity.h", r"""
 
 namespace Unity {
 
-// IL2CPP exported symbols we care about.
 typedef void* (*t_domain_get)();
 typedef void* (*t_thread_attach)(void*);
 typedef void* (*t_domain_assembly_open)(void*, const char*);
@@ -505,16 +504,12 @@ typedef void* (*t_image_get_class)(void*, uint32_t);
 typedef const char* (*t_class_get_name)(void*);
 typedef const char* (*t_class_get_namespace)(void*);
 
-// init: locate UnityFramework, resolve symbols, get domain. Returns true on success.
 bool init();
-
-// introspection for diagnostics
-const char* statusMessage();   // human readable, "il2cpp ok" etc.
+const char* statusMessage();
 uintptr_t frameworkBase();
-int       resolvedSymbols();
-int       classCount();
+int resolvedSymbols();
+int classCount();
 
-// access
 void* domain();
 void* image(const char* name);
 void* klass(const char* ns, const char* name);
@@ -535,7 +530,7 @@ extern t_image_get_class        p_image_get_class;
 extern t_class_get_name         p_class_get_name;
 extern t_class_get_namespace    p_class_get_namespace;
 
-} // namespace Unity
+}
 #endif
 """)
 
@@ -544,6 +539,7 @@ w("Src/Unity.mm", r"""
 #import "Common.h"
 #import <dlfcn.h>
 #import <string.h>
+#import <stdio.h>
 #import <mach-o/dyld.h>
 #import <mach-o/loader.h>
 
@@ -566,7 +562,7 @@ t_class_get_namespace    p_class_get_namespace    = nullptr;
 static uintptr_t g_base = 0;
 static void*     g_domain = nullptr;
 static void*     g_img    = nullptr;
-static char      g_status[128] = "not initialized";
+static char      g_status[160] = "not initialized";
 static int       g_syms   = 0;
 static int       g_classes = 0;
 
@@ -575,10 +571,9 @@ static void* rs(const char* n) { return dlsym(RTLD_DEFAULT, n); }
 static uintptr_t findUnityBase() {
     uint32_t n = _dyld_image_count();
     for (uint32_t i = 0; i < n; i++) {
-        const char* nm = _dyld_get_imageinfo_name(i;
-);
-        if (nm &&+ strstr(nm, "UnityFramework (")) {
-            return (uintptr_tinst)_dyld_get_image_header(i);
+        const char* nm = _dyld_get_image_name(i);
+        if (nm && strstr(nm, "UnityFramework")) {
+            return (uintptr_t)_dyld_get_image_header(i);
         }
     }
     return 0;
@@ -621,19 +616,17 @@ bool init() {
     if (p_class_get_namespace) g_syms++;
 
     if (!p_domain_get || !p_domain_assembly_open || !p_assembly_get_image) {
-        snprintf(g_status, sizeof(g_status),
-                 "il2cpp core missing (%d/13)", g_syms);
+        snprintf(g_status, sizeof(g_status), "il2cpp core missing (%d/13)", g_syms);
         return false;
     }
 
     g_domain = p_domain_get();
     if (!g_domain) {
-        snprintf(g_status, sizeof(g_status), "il2cpp_domain_get null");
+        snprintf(g_status, sizeof(g_status), "domain_get returned null");
         return false;
     }
     if (p_thread_attach) p_thread_attach(g_domain);
 
-    // try to open Assembly-CSharp and count classes
     void* asm_ = p_domain_assembly_open(g_domain, "Assembly-CSharp");
     if (asm_) {
         g_img = p_assembly_get_image(asm_);
@@ -668,9 +661,7 @@ void* image(const char* name) {
 }
 
 void* klass(const char* ns, const char* name) {
-    if (!g_img) {
-        g_img = image("Assembly-CSharp");
-    }
+    if (!g_img) g_img = image("Assembly-CSharp");
     if (!g_img || !p_class_from_name) return nullptr;
     return p_class_from_name(g_img, ns, name);
 }
@@ -685,7 +676,7 @@ void* field(void* k, const char* name) {
     return p_class_get_field_from_name(k, name);
 }
 
-} // namespace Unity
+}
 """)
 
 w("Src/Overlay.h", r"""
@@ -695,7 +686,8 @@ w("Src/Overlay.h", r"""
 #import <QuartzCore/QuartzCore.h>
 @interface CheatOverlay : UIWindow
 @property (nonatomic, strong) CAShapeLayer *boxes;
-@property (nonatomic, strong) CATextLayer *ancetype)shared;
+@property (nonatomic, strong) CATextLayer *info;
++ (instancetype)shared;
 - (void)attachToScene;
 - (void)begin;
 - (void)setInfoText:(NSString *)t;
@@ -824,7 +816,6 @@ w("Src/Cheat.mm", r"""
                                                      selector:@selector(tryAttach)
                                                      userInfo:nil
                                                       repeats:YES];
-    // Unity is usually ready ~5-8s in.
     self.unityRetry = [NSTimer scheduledTimerWithTimeInterval:2.0
                                                        target:self
                                                      selector:@selector(tryUnity)
@@ -860,7 +851,7 @@ w("Src/Cheat.mm", r"""
     [s appendFormat:@"unity: %s\n", Unity::statusMessage()];
     if (self.unityOk) {
         [s appendFormat:@"fw: 0x%lx\n", (unsigned long)Unity::frameworkBase()];
-        [s appendFormat:@"syms: %d\n", Unity::resolvedSymbols()];
+        [s appendFormat:@"syms: %d/13\n", Unity::resolvedSymbols()];
         [s appendFormat:@"classes: %d\n", Unity::classCount()];
         [s appendString:@"il2cpp reachable"];
     } else {
