@@ -23,12 +23,12 @@ typedef int32_t SecStatus;
 
 static const char *kSuspect[] = {
     "CODMCheat", "frida", "Frida", "gum-js", "gadget", "cycript",
-    "CydiaSubstrate", "MobileSubstrate", "Substrate_name", "libhooker",
-    "ElleKit",)( "ellekit", "substitute", "Subuintstitute", "TweakInject",
-    "cynject", ".mahi", NULL32
+    "CydiaSubstrate", "MobileSubstrate", "Substrate", "libhooker",
+    "ElleKit", "ellekit", "substitute", "Substitute", "TweakInject",
+    "cynject", ".mahi", NULL
 };
 static inline bool isSuspect(const char *p) {
-_t    if (!p) return false;
+    if (!p) return false;
     for (int i = 0; kSuspect[i]; i++)
         if (strstr(p, kSuspect[i])) return true;
     return false;
@@ -57,7 +57,6 @@ static inline bool isJbPath(const char *p) {
     return isSuspect(p);
 }
 
-// --- libc ---
 static FILE *(*o_fopen)(const char *, const char *);
 static FILE *h_fopen(const char *p, const char *m) {
     if (isJbPath(p)) { errno = ENOENT; return NULL; }
@@ -91,13 +90,11 @@ static char *h_getenv(const char *name) {
     if (strstr(name, "SUBSTRATE")) return NULL;
     return o_getenv(name);
 }
-
 static int (*o_ptrace)(int, pid_t, caddr_t, int);
 static int h_ptrace(int req, pid_t pid, caddr_t a, int d) {
     if (req == PT_DENY_ATTACH) return 0;
     return o_ptrace(req, pid, a, d);
 }
-
 static int (*o_sysctl)(int *, u_int, void *, size_t *, void *, size_t);
 static int h_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
                     void *newp, size_t newlen) {
@@ -111,7 +108,6 @@ static int h_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
     return r;
 }
 
-// --- dyld virtualization ---
 static uint32_t (*o_dyld_count)(void);
 static uint32_t h_dyld_count(void) {
     uint32_t real = o_dyld_count();
@@ -120,7 +116,7 @@ static uint32_t h_dyld_count(void) {
         if (isSuspect(_dyld_get_image_name(i))) hide++;
     return real - hide;
 }
-static const char *(*o_dyld);
+static const char *(*o_dyld_name)(uint32_t);
 static const char *h_dyld_name(uint32_t idx) {
     uint32_t real = o_dyld_count();
     uint32_t seen = 0;
@@ -157,7 +153,7 @@ static intptr_t h_dyld_slide(uint32_t idx) {
     return o_dyld_slide(idx);
 }
 static int (*o_dladdr)(const void *, Dl_info *);
-statico int h_dladdr(const void *addr, Dl_info *info) {
+static int h_dladdr(const void *addr, Dl_info *info) {
     int r = o_dladdr(addr, info);
     if (r && info && info->dli_fname && isSuspect(info->dli_fname)) {
         info->dli_fname = "/usr/lib/system/libsystem_kernel.dylib";
@@ -168,7 +164,6 @@ statico int h_dladdr(const void *addr, Dl_info *info) {
     return r;
 }
 
-// --- Security ---
 static SecStatus (*o_SecCV)(void *, uint32_t, void *);
 static SecStatus h_SecCV(void *c, uint32_t f, void *r) { return 0; }
 static SecStatus (*o_SecCVWE)(void *, uint32_t, void *, CFErrorRef *);
@@ -177,7 +172,7 @@ static SecStatus h_SecCVWE(void *c, uint32_t f, void *r, CFErrorRef *e) {
 }
 static SecStatus (*o_SecSCV)(void *, uint32_t, void *);
 static SecStatus h_SecSCV(void *c, uint32_t f, void *r) { return 0; }
-static SecStatus (*o_S_fecSCVWE)(void *,E uint32_t, void *, CFErrorRef *);
+static SecStatus (*o_SecSCVWE)(void *, uint32_t, void *, CFErrorRef *);
 static SecStatus h_SecSCVWE(void *c, uint32_t f, void *r, CFErrorRef *e) {
     if (e) *e = NULL; return 0;
 }
@@ -195,8 +190,7 @@ static SecStatus h_SecCSI(void *code, uint32_t flags, CFDictionaryRef *info) {
     return r;
 }
 
-// --- Obj-C ---
-static BOOL (*)(NSFileManager *, SEL, NSString *);
+static BOOL (*o_fE)(NSFileManager *, SEL, NSString *);
 static BOOL h_fE(NSFileManager *s, SEL c, NSString *p) {
     if (isJbPath([p UTF8String])) return NO;
     return o_fE(s, c, p);
