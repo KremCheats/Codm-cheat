@@ -43,7 +43,9 @@ static void CODMCheatEntry(void) {
         if (!isCODM()) return;
         LOGI("CODMCheat entry");
         Bypass::install();
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)),
+
+        // Start Cheat once, then let it manage its own scene-attach retries.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
             [[Cheat shared] start];
         });
@@ -456,35 +458,26 @@ namespace Bypass {
 
 void install() {
     LOGI("Bypass installing");
-
-    // libc
     HK::rebind("fopen",   (void *)h_fopen,   (void **)&o_fopen);
     HK::rebind("stat",    (void *)h_stat,    (void **)&o_stat);
     HK::rebind("lstat",   (void *)h_lstat,   (void **)&o_lstat);
     HK::rebind("access",  (void *)h_access,  (void **)&o_access);
     HK::rebind("opendir", (void *)h_opendir, (void **)&o_opendir);
     HK::rebind("getenv",  (void *)h_getenv,  (void **)&o_getenv);
-
-    // process
     HK::rebind("ptrace",  (void *)h_ptrace,  (void **)&o_ptrace);
     HK::rebind("sysctl",  (void *)h_sysctl,  (void **)&o_sysctl);
     HK::rebind("dladdr",  (void *)h_dladdr,  (void **)&o_dladdr);
-
-    // objc
     HK::swizzleClass([NSFileManager class], @selector(fileExistsAtPath:),
                      (IMP)h_fE, (IMP *)&o_fE);
     HK::swizzleClass([NSFileManager class], @selector(fileExistsAtPath:isDirectory:),
                      (IMP)h_fED, (IMP *)&o_fED);
     HK::swizzleClass([UIApplication class], @selector(canOpenURL:),
                      (IMP)h_cOU, (IMP *)&o_cOU);
-
-    // code signing
     HK::rebind("SecCodeCheckValidity",                 (void *)h_SecCV,   (void **)&o_SecCV);
     HK::rebind("SecCodeCheckValidityWithErrors",       (void *)h_SecCVWE, (void **)&o_SecCVWE);
     HK::rebind("SecStaticCodeCheckValidity",           (void *)h_SecSCV,  (void **)&o_SecSCV);
     HK::rebind("SecStaticCodeCheckValidityWithErrors", (void *)h_SecSCVWE,(void **)&o_SecSCVWE);
     HK::rebind("SecCodeCopySigningInformation",        (void *)h_SecCSI,  (void **)&o_SecCSI);
-
     LOGI("Bypass installed");
 }
 
@@ -500,47 +493,100 @@ w("Src/Overlay.h", r"""
 @property (nonatomic, strong) CAShapeLayer *boxes;
 @property (nonatomic, strong) CATextLayer *info;
 + (instancetype)shared;
-- (void)attach;
+- (void)attachToScene;
+- (void)begin;
 - (void)setInfoText:(NSString *)t;
+- (void)drawBoxAt:(CGRect)r color:(UIColor *)c;
+- (void)drawLineFrom:(CGPoint)a to:(CGPoint)b color:(UIColor *)c;
 @end
 #endif
 """)
 
 w("Src/Overlay.mm", r"""
 #import "Overlay.h"
+
 @implementation CheatOverlay
+
 + (instancetype)shared {
-    static CheatOverlay *s; static dispatch_once_t once;
-    dispatch_once(&once, ^{ s = [[CheatOverlay alloc] initWithFrame:[UIScreen mainScreen].bounds]; });
+    static CheatOverlay *s;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        s = [[CheatOverlay alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    });
     return s;
 }
+
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self = [super initWithFrame:frame])) {
-        self.windowLevel = UIWindowLevelAlert + 100;
+        self.windowLevel = UIWindowLevelAlert + 5000;
         self.backgroundColor = [UIColor clearColor];
         self.userInteractionEnabled = NO;
-        self.rootViewController = [UIViewController new];
-        self.rootViewController.view.backgroundColor = [UIColor clearColor];
         self.hidden = YES;
+
         self.boxes = [CAShapeLayer layer];
         self.boxes.frame = self.bounds;
         self.boxes.fillColor = [UIColor clearColor].CGColor;
-        self.boxes.lineWidth = 1.2;
+        self.boxes.lineWidth = 1.5;
         self.boxes.strokeColor = [UIColor colorWithRed:0 green:1 blue:0.3 alpha:1].CGColor;
+
         self.info = [CATextLayer layer];
-        self.info.frame = CGRectMake(12, 60, frame.size.width - 24, 220);
-        self.info.foregroundColor = [UIColor colorWithRed:0 green:1 blue:0.5 alpha:1].CGColor;
-        self.info.fontSize = 11;
+        self.info.frame = CGRectMake(12, 70, frame.size.width - 24, 260);
+        self.info.foregroundColor = [UIColor colorWithRed:0 green:1 blue:0.3 alpha:1].CGColor;
+        self.info.fontSize = 14;
         self.info.contentsScale = [UIScreen mainScreen].scale;
         self.info.alignmentMode = kCAAlignmentLeft;
         self.info.wrapped = YES;
+        self.info.string = @"CODMCheat booting...";
+
         [self.layer addSublayer:self.boxes];
         [self.layer addSublayer:self.info];
     }
     return self;
 }
-- (void)attach { self.hidden = NO; [self makeKeyAndVisible]; }
+
+// Find the app's active UIWindowScene and attach our window to it.
+- (void)attachToScene {
+    UIWindowScene *scene = nil;
+    for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
+        if ([s isKindOfClass:[UIWindowScene class]]) {
+            if (s.activationState == UISceneActivationStateForegroundActive ||
+                s.activationState == UISceneActivationStateForegroundInactive) {
+                scene = (UIWindowScene *)s;
+                break;
+            }
+        }
+    }
+    if (scene) {
+        // Re-parent onto the scene's window list.
+        self.windowScene = scene;
+        self.hidden = NO;
+        self.windowLevel = UIWindowLevelAlert + 5000;
+        NSLog(@"[CODMCheat] attached to scene %@", scene);
+    } else {
+        NSLog(@"[CODMCheat] no active scene yet");
+    }
+}
+
+- (void)begin { self.boxes.path = NULL; }
+
 - (void)setInfoText:(NSString *)t { self.info.string = t; }
+
+- (void)drawBoxAt:(CGRect)r color:(UIColor *)c {
+    UIBezierPath *p = [UIBezierPath bezierPathWithRect:r];
+    CGMutablePathRef cur = CGPathCreateMutableCopy(self.boxes.path ?: CGPathCreateMutable());
+    CGPathAddPath(cur, NULL, p.CGPath);
+    self.boxes.path = cur;
+    CGPathRelease(cur);
+}
+
+- (void)drawLineFrom:(CGPoint)a to:(CGPoint)b color:(UIColor *)c {
+    CGMutablePathRef cur = CGPathCreateMutableCopy(self.boxes.path ?: CGPathCreateMutable());
+    CGPathMoveToPoint(cur, NULL, a.x, a.y);
+    CGPathAddLineToPoint(cur, NULL, b.x, b.y);
+    self.boxes.path = cur;
+    CGPathRelease(cur);
+}
+
 @end
 """)
 
@@ -562,20 +608,46 @@ w("Src/Cheat.mm", r"""
 #import "Overlay.h"
 #import <QuartzCore/QuartzCore.h>
 
+@interface Cheat ()
+@property (nonatomic, strong) NSTimer *sceneRetry;
+@end
+
 @implementation Cheat
+
 + (instancetype)shared {
-    static Cheat *s; static dispatch_once_t once;
+    static Cheat *s;
+    static dispatch_once_t once;
     dispatch_once(&once, ^{ s = [Cheat new]; });
     return s;
 }
+
 - (void)start {
     LOGI("Cheat::start");
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [[CheatOverlay shared] attach];
-        [[CheatOverlay shared] setInfoText:@"CODM (non-JB)\nbypass active"];
-    });
+    // Try to attach now; if the scene isn't ready, keep retrying every 500ms.
+    [self tryAttach];
+    self.sceneRetry = [NSTimer scheduledTimerWithTimeInterval:0.5
+                                                       target:self
+                                                     selector:@selector(tryAttach)
+                                                     userInfo:nil
+                                                      repeats:YES];
 }
-- (void)stop {}
+
+- (void)tryAttach {
+    CheatOverlay *ov = [CheatOverlay shared];
+    [ov attachToScene];
+    if (ov.hidden == NO) {
+        [ov setInfoText:@"CODM (non-JB)\nbypass active\noverlay visible"];
+        [self.sceneRetry invalidate];
+        self.sceneRetry = nil;
+    }
+}
+
+- (void)stop {
+    [self.sceneRetry invalidate];
+    self.sceneRetry = nil;
+    [[CheatOverlay shared] setInfoText:@""];
+}
+
 @end
 """)
 
