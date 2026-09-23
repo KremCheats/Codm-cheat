@@ -7,24 +7,15 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - name: Check file
-        run: |
-          ls -la mystery.dylib || { echo "no mystery.dylib"; exit 1; }
-      - name: lipo info
-        run: lipo -info mystery.dylib || true
-      - name: cryptid
-        run: otool -l mystery.dylib | grep -A4 LC_ENCRYPTION_INFO || echo "no encryption info"
-      - name: linked libraries
+      - name: Hooking hints
+        run: strings mystery.dylib | grep -iE "fishhook|dobby|substrate|substitute|ellekit|libhooker|MSHook|rebind|trampoline|ljhooker|CydiaSubstrate|hook" | head -100 || true
+      - name: Auth hints
+        run: strings mystery.dylib | grep -iE "license|key|auth|login|verify|expire|hwid|udid" | head -80 || true
+      - name: Network
+        run: strings mystery.dylib | grep -oE "https?://[a-zA-Z0-9./?=_-]+" | sort -u | head -60 || true
+      - name: Framework refs
         run: otool -L mystery.dylib || true
-      - name: hooking framework hints
-        run: strings mystery.dylib | grep -iE "fishhook|dobby|substrate|substitute|ellekit|libhooker|MSHook|rebind|trampoline|ljhooker|CydiaSubstrate" | head -50 || true
-      - name: dyld anticheat
-        run: strings mystery.dylib | grep -E "_dyld_|dladdr|ptrace|sysctl|SecCode|SecStaticCode|jailbreak|cydia" | head -80 || true
-      - name: unity il2cpp
-        run: strings mystery.dylib | grep -iE "il2cpp|unity|mono_|gameassembly" | head -50 || true
-      - name: game classes
-        run: strings mystery.dylib | grep -iE "Player|GamePlayer|Camera|Character|Weapon|Bone|Hitbox|Skeleton|AimTarget" | head -120 || true
-      - name: function names from symbols
-        run: nm mystery.dylib 2>/dev/null | grep -iE "aim|esp|hook|bypass|wall|silent|recoil" | head -80 || true
-      - name: strings big list
-        run: strings -n 6 mystery.dylib | head -600 || true
+      - name: Symbols
+        run: nm mystery.dylib 2>/dev/null | head -300 || true
+      - name: Big strings
+        run: strings -n 8 mystery.dylib | head -500 || true
