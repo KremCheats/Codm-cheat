@@ -9,9 +9,6 @@
 #import <string.h>
 #import <unistd.h>
 #import <mach-o/dyld.h>
-#import <mach-o/loader.h>
-#import <mach/mach.h>
-#import <libkern/OSCacheControl.h>
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
@@ -21,21 +18,17 @@
 #ifndef KERN_PROC_PROC
 #define KERN_PROC_PROC 2
 #endif
-
 extern "C" int ptrace(int request, pid_t pid, caddr_t addr, int data);
-
-// Use void* / uint32_t instead of Sec* types — no need to import Security headers.
 typedef int32_t SecStatus;
 
 static const char *kSuspect[] = {
     "CODMCheat", "frida", "Frida", "gum-js", "gadget", "cycript",
-    "CydiaSubstrate", "MobileSubstrate", "Substrate", "libhooker",
-    "ElleKit", "ellekit", "substitute", "Substitute", "TweakInject",
-    "cynject", ".mahi", NULL
+    "CydiaSubstrate", "MobileSubstrate", "Substrate_name", "libhooker",
+    "ElleKit",)( "ellekit", "substitute", "Subuintstitute", "TweakInject",
+    "cynject", ".mahi", NULL32
 };
-
 static inline bool isSuspect(const char *p) {
-    if (!p) return false;
+_t    if (!p) return false;
     for (int i = 0; kSuspect[i]; i++)
         if (strstr(p, kSuspect[i])) return true;
     return false;
@@ -57,7 +50,6 @@ static const char *kJbPaths[] = {
     "/var/jb/Applications/Sileo.app", "/var/jb/Applications/Zebra.app",
     NULL
 };
-
 static inline bool isJbPath(const char *p) {
     if (!p) return false;
     for (int i = 0; kJbPaths[i]; i++)
@@ -65,34 +57,7 @@ static inline bool isJbPath(const char *p) {
     return isSuspect(p);
 }
 
-namespace Bypass {
-
-void scrubMainBinaryLoadCommands() {
-    const struct mach_header_64 *hdr =
-        (const struct mach_header_64 *)_dyld_get_image_header(0);
-    if (!hdr) return;
-    uint8_t *base = (uint8_t *)hdr;
-    struct load_command *lc =
-        (struct load_command *)(base + sizeof(struct mach_header_64));
-    for (uint32_t i = 0; i < hdr->ncmds && lc; i++) {
-        uint32_t cmd = lc->cmd;
-        if (cmd == LC_LOAD_DYLIB || cmd == LC_LOAD_WEAK_DYLIB || cmd == LC_REEXPORT_DYLIB) {
-            struct dylib_command *dc = (struct dylib_command *)lc;
-            const char *name = (const char *)((uint8_t *)dc + dc->dylib.name.offset);
-            if (isSuspect(name)) {
-                vm_protect(mach_task_self(), (uintptr_t)dc & ~0xFFF, 0x4000,
-                           false, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
-                dc->cmd = LC_NOTE;
-                sys_icache_invalidate((void *)dc, lc->cmdsize);
-                LOGI("scrubbed LC_LOAD_DYLIB: %s", name);
-            }
-        }
-        lc = (struct load_command *)((uint8_t *)lc + lc->cmdsize);
-    }
-}
-
-}
-
+// --- libc ---
 static FILE *(*o_fopen)(const char *, const char *);
 static FILE *h_fopen(const char *p, const char *m) {
     if (isJbPath(p)) { errno = ENOENT; return NULL; }
@@ -146,6 +111,7 @@ static int h_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
     return r;
 }
 
+// --- dyld virtualization ---
 static uint32_t (*o_dyld_count)(void);
 static uint32_t h_dyld_count(void) {
     uint32_t real = o_dyld_count();
@@ -154,7 +120,7 @@ static uint32_t h_dyld_count(void) {
         if (isSuspect(_dyld_get_image_name(i))) hide++;
     return real - hide;
 }
-static const char *(*o_dyld_name)(uint32_t);
+static const char *(*o_dyld);
 static const char *h_dyld_name(uint32_t idx) {
     uint32_t real = o_dyld_count();
     uint32_t seen = 0;
@@ -191,7 +157,7 @@ static intptr_t h_dyld_slide(uint32_t idx) {
     return o_dyld_slide(idx);
 }
 static int (*o_dladdr)(const void *, Dl_info *);
-static int h_dladdr(const void *addr, Dl_info *info) {
+statico int h_dladdr(const void *addr, Dl_info *info) {
     int r = o_dladdr(addr, info);
     if (r && info && info->dli_fname && isSuspect(info->dli_fname)) {
         info->dli_fname = "/usr/lib/system/libsystem_kernel.dylib";
@@ -202,22 +168,18 @@ static int h_dladdr(const void *addr, Dl_info *info) {
     return r;
 }
 
-// Security — untyped refs, we don't need real headers.
+// --- Security ---
 static SecStatus (*o_SecCV)(void *, uint32_t, void *);
 static SecStatus h_SecCV(void *c, uint32_t f, void *r) { return 0; }
-
 static SecStatus (*o_SecCVWE)(void *, uint32_t, void *, CFErrorRef *);
 static SecStatus h_SecCVWE(void *c, uint32_t f, void *r, CFErrorRef *e) {
-    if (e) *e = NULL;
-    return 0;
+    if (e) *e = NULL; return 0;
 }
 static SecStatus (*o_SecSCV)(void *, uint32_t, void *);
 static SecStatus h_SecSCV(void *c, uint32_t f, void *r) { return 0; }
-
-static SecStatus (*o_SecSCVWE)(void *, uint32_t, void *, CFErrorRef *);
+static SecStatus (*o_S_fecSCVWE)(void *,E uint32_t, void *, CFErrorRef *);
 static SecStatus h_SecSCVWE(void *c, uint32_t f, void *r, CFErrorRef *e) {
-    if (e) *e = NULL;
-    return 0;
+    if (e) *e = NULL; return 0;
 }
 static SecStatus (*o_SecCSI)(void *, uint32_t, CFDictionaryRef *);
 static SecStatus h_SecCSI(void *code, uint32_t flags, CFDictionaryRef *info) {
@@ -233,7 +195,8 @@ static SecStatus h_SecCSI(void *code, uint32_t flags, CFDictionaryRef *info) {
     return r;
 }
 
-static BOOL (*o_fE)(NSFileManager *, SEL, NSString *);
+// --- Obj-C ---
+static BOOL (*)(NSFileManager *, SEL, NSString *);
 static BOOL h_fE(NSFileManager *s, SEL c, NSString *p) {
     if (isJbPath([p UTF8String])) return NO;
     return o_fE(s, c, p);
@@ -256,18 +219,15 @@ static BOOL h_cOU(UIApplication *s, SEL c, NSURL *u) {
 namespace Bypass {
 
 void install() {
-    LOGI("Bypass (non-JB) installing...");
-    scrubMainBinaryLoadCommands();
-
-    HK::installSym("fopen",   (void *)h_fopen,   (void **)&o_fopen);
-    HK::installSym("stat",    (void *)h_stat,    (void **)&o_stat);
-    HK::installSym("lstat",   (void *)h_lstat,   (void **)&o_lstat);
-    HK::installSym("access",  (void *)h_access,  (void **)&o_access);
-    HK::installSym("opendir", (void *)h_opendir, (void **)&o_opendir);
-    HK::installSym("getenv",  (void *)h_getenv,  (void **)&o_getenv);
-
-    HK::installSym("ptrace",  (void *)h_ptrace,  (void **)&o_ptrace);
-    HK::installSym("sysctl",  (void *)h_sysctl,  (void **)&o_sysctl);
+    LOGI("Bypass installing (fishhook)");
+    HK::rebind("fopen",   (void *)h_fopen,   (void **)&o_fopen);
+    HK::rebind("stat",    (void *)h_stat,    (void **)&o_stat);
+    HK::rebind("lstat",   (void *)h_lstat,   (void **)&o_lstat);
+    HK::rebind("access",  (void *)h_access,  (void **)&o_access);
+    HK::rebind("opendir", (void *)h_opendir, (void **)&o_opendir);
+    HK::rebind("getenv",  (void *)h_getenv,  (void **)&o_getenv);
+    HK::rebind("ptrace",  (void *)h_ptrace,  (void **)&o_ptrace);
+    HK::rebind("sysctl",  (void *)h_sysctl,  (void **)&o_sysctl);
 
     HK::swizzleClass([NSFileManager class], @selector(fileExistsAtPath:),
                      (IMP)h_fE, (IMP *)&o_fE);
@@ -276,19 +236,19 @@ void install() {
     HK::swizzleClass([UIApplication class], @selector(canOpenURL:),
                      (IMP)h_cOU, (IMP *)&o_cOU);
 
-    HK::installSym("_dyld_image_count",             (void *)h_dyld_count, (void **)&o_dyld_count);
-    HK::installSym("_dyld_get_image_name",          (void *)h_dyld_name,  (void **)&o_dyld_name);
-    HK::installSym("_dyld_get_image_header",        (void *)h_dyld_hdr,   (void **)&o_dyld_hdr);
-    HK::installSym("_dyld_get_image_vmaddr_slide",  (void *)h_dyld_slide, (void **)&o_dyld_slide);
-    HK::installSym("dladdr",                        (void *)h_dladdr,     (void **)&o_dladdr);
+    HK::rebind("_dyld_image_count",             (void *)h_dyld_count, (void **)&o_dyld_count);
+    HK::rebind("_dyld_get_image_name",          (void *)h_dyld_name,  (void **)&o_dyld_name);
+    HK::rebind("_dyld_get_image_header",        (void *)h_dyld_hdr,   (void **)&o_dyld_hdr);
+    HK::rebind("_dyld_get_image_vmaddr_slide",  (void *)h_dyld_slide, (void **)&o_dyld_slide);
+    HK::rebind("dladdr",                        (void *)h_dladdr,     (void **)&o_dladdr);
 
-    HK::installSym("SecCodeCheckValidity",                 (void *)h_SecCV,   (void **)&o_SecCV);
-    HK::installSym("SecCodeCheckValidityWithErrors",       (void *)h_SecCVWE, (void **)&o_SecCVWE);
-    HK::installSym("SecStaticCodeCheckValidity",           (void *)h_SecSCV,  (void **)&o_SecSCV);
-    HK::installSym("SecStaticCodeCheckValidityWithErrors", (void *)h_SecSCVWE,(void **)&o_SecSCVWE);
-    HK::installSym("SecCodeCopySigningInformation",        (void *)h_SecCSI,  (void **)&o_SecCSI);
+    HK::rebind("SecCodeCheckValidity",                 (void *)h_SecCV,   (void **)&o_SecCV);
+    HK::rebind("SecCodeCheckValidityWithErrors",       (void *)h_SecCVWE, (void **)&o_SecCVWE);
+    HK::rebind("SecStaticCodeCheckValidity",           (void *)h_SecSCV,  (void **)&o_SecSCV);
+    HK::rebind("SecStaticCodeCheckValidityWithErrors", (void *)h_SecSCVWE,(void **)&o_SecSCVWE);
+    HK::rebind("SecCodeCopySigningInformation",        (void *)h_SecCSI,  (void **)&o_SecCSI);
 
-    LOGI("Bypass (non-JB) installed");
+    LOGI("Bypass installed");
 }
 
 }

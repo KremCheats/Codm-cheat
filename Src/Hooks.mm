@@ -1,16 +1,15 @@
 #import "Hooks.h"
-#import <dlfcn.h>
 #import <objc/runtime.h>
-#include <dobby.h>
-namespace HK {
-bool install(void *target, void *replacement, void **orig) {
-    if (!target) return false;
-    return DobbyHook(target, replacement, orig) == 0;
+extern "C" {
+#include "fishhook.h"
 }
-bool installSym(const char *sym, void *replacement, void **orig) {
-    void *p = dlsym(RTLD_DEFAULT, sym);
-    if (!p) return false;
-    return install(p, replacement, orig);
+namespace HK {
+void rebind(const char *name, void *replacement, void **orig) {
+    struct rebinding rb;
+    rb.name = name;
+    rb.replacement = replacement;
+    rb.replaced = orig;
+    rebind_symbols(&rb, 1);
 }
 bool swizzleClass(Class cls, SEL sel, IMP replacement, IMP *original) {
     Method m = class_getInstanceMethod(cls, sel);

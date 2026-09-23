@@ -2,6 +2,5 @@
 #define BYPASS_H
 namespace Bypass {
 void install();
-void scrubMainBinaryLoadCommands();
 }
 #endif
