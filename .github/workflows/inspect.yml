@@ -1,0 +1,21 @@
+name: Inspect
+on:
+  push: { paths: [ 'mystery.dylib' ] }
+  workflow_dispatch:
+jobs:
+  inspect:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hooking hints
+        run: strings mystery.dylib | grep -iE "fishhook|dobby|substrate|substitute|ellekit|libhooker|MSHook|rebind|trampoline|ljhooker|CydiaSubstrate|hook" | head -100 || true
+      - name: Auth hints
+        run: strings mystery.dylib | grep -iE "license|key|auth|login|verify|expire|hwid|udid" | head -80 || true
+      - name: Network
+        run: strings mystery.dylib | grep -oE "https?://[a-zA-Z0-9./?=_-]+" | sort -u | head -60 || true
+      - name: Framework refs
+        run: otool -L mystery.dylib || true
+      - name: Symbols
+        run: nm mystery.dylib 2>/dev/null | head -300 || true
+      - name: Big strings
+        run: strings -n 8 mystery.dylib | head -500 || true
