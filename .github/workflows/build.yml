@@ -58,6 +58,10 @@ jobs:
           cp "$(find /tmp/dobby -name libdobby.a | head -n1)" "$GITHUB_WORKSPACE/vendor/dobby/build/libdobby.a"
           cp -r /tmp/dobby/include/* "$GITHUB_WORKSPACE/vendor/dobby/include/" 2>/dev/null || true
           find "$GITHUB_WORKSPACE/vendor/dobby/include" -type f | head
+      - name: Patch Makefile flags
+        run: |
+          sed -i '' 's|^\(CODMCheat_C[A-Z]*FLAGS =.*\)$|\1 -Wno-module-import-in-extern-c -Wno-error|' Makefile
+          grep -E '^CODMCheat_C[A-Z]*FLAGS' Makefile
       - name: Build
         run: make clean || true; make
       - name: Collect
