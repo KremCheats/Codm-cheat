@@ -7,7 +7,7 @@
 }
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self = [super initWithFrame:frame])) {
-        self.windowLevel = UIWindowLevelAlert + 100;
+        self.windowLevel = UIWindow;
         self.backgroundColor = [UIColor clearColor];
         self.userInteractionEnabled = NO;
         self.rootViewController = [UIViewController new];

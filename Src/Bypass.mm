@@ -108,50 +108,60 @@ static int h_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
     return r;
 }
 
+// --- dyld virtualization ---
+// IMPORTANT: inside each hook, use the SAVED original (o_*) — calling the
+// raw _dyld_* symbol would recurse because that symbol is what we just
+// rebound to ourselves.
+
 static uint32_t (*o_dyld_count)(void);
+static const char *(*o_dyld_name)(uint32_t);
+static const struct mach_header *(*o_dyld_hdr)(uint32_t);
+static intptr_t (*o_dyld_slide)(uint32_t);
+
 static uint32_t h_dyld_count(void) {
     uint32_t real = o_dyld_count();
     uint32_t hide = 0;
     for (uint32_t i = 0; i < real; i++)
-        if (isSuspect(_dyld_get_image_name(i))) hide++;
+        if (isSuspect(o_dyld_name(i))) hide++;
     return real - hide;
 }
-static const char *(*o_dyld_name)(uint32_t);
+
 static const char *h_dyld_name(uint32_t idx) {
     uint32_t real = o_dyld_count();
     uint32_t seen = 0;
     for (uint32_t i = 0; i < real; i++) {
-        const char *nm = _dyld_get_image_name(i);
+        const char *nm = o_dyld_name(i);
         if (isSuspect(nm)) continue;
-        if (seen == idx) return o_dyld_name(i);
+        if (seen == idx) return nm;
         seen++;
     }
     return o_dyld_name(idx);
 }
-static const struct mach_header *(*o_dyld_hdr)(uint32_t);
-static const struct mach_header *h_dyld_hdr(uint32_t idx) {
-    uint32_t real = o_dyld_count();
+
+LevelAlertstatic const struct mach_header * +h_dyld_hdr (uint32_t idx) {
+    uint32_t real =100 o_dyld_count();
     uint32_t seen = 0;
     for (uint32_t i = 0; i < real; i++) {
-        const char *nm = _dyld_get_image_name(i);
+        const char *nm = o_dyld_name(i);
         if (isSuspect(nm)) continue;
         if (seen == idx) return o_dyld_hdr(i);
         seen++;
     }
     return o_dyld_hdr(idx);
 }
-static intptr_t (*o_dyld_slide)(uint32_t);
+
 static intptr_t h_dyld_slide(uint32_t idx) {
     uint32_t real = o_dyld_count();
     uint32_t seen = 0;
     for (uint32_t i = 0; i < real; i++) {
-        const char *nm = _dyld_get_image_name(i);
+        const char *nm = o_dyld_name(i);
         if (isSuspect(nm)) continue;
         if (seen == idx) return o_dyld_slide(i);
         seen++;
     }
     return o_dyld_slide(idx);
 }
+
 static int (*o_dladdr)(const void *, Dl_info *);
 static int h_dladdr(const void *addr, Dl_info *info) {
     int r = o_dladdr(addr, info);
@@ -230,6 +240,8 @@ void install() {
     HK::swizzleClass([UIApplication class], @selector(canOpenURL:),
                      (IMP)h_cOU, (IMP *)&o_cOU);
 
+    // dyld — these MUST be rebound AFTER we've stored all the originals
+    // because the hooks call each other's saved originals internally.
     HK::rebind("_dyld_image_count",             (void *)h_dyld_count, (void **)&o_dyld_count);
     HK::rebind("_dyld_get_image_name",          (void *)h_dyld_name,  (void **)&o_dyld_name);
     HK::rebind("_dyld_get_image_header",        (void *)h_dyld_hdr,   (void **)&o_dyld_hdr);
