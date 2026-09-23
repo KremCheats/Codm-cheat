@@ -1,69 +1,43 @@
-name: Build CODMCheat
-
+name: Build
 on:
-  push:
-    branches: [ main ]
+  push: { branches: [ main ] }
   workflow_dispatch:
-
 permissions:
   contents: write
-
 jobs:
   build:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Select Xcode
+        with: { token: "${{ secrets.GITHUB_TOKEN }}" }
+      - name: Xcode
         run: sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer || true
-
-      - name: Install deps
+      - name: Deps
         run: brew install ldid xz make cmake || true
-
-      - name: Set up Theos
+      - name: Theos
         run: |
-          [[ -d "$HOME/theos" ]] || git clone --recursive --depth 1 https://github.com/theos/theos.git "$HOME/theos"
+          [ -d "$HOME/theos" ] || git clone --recursive --depth 1 https://github.com/theos/theos.git "$HOME/theos"
           echo "THEOS=$HOME/theos" >> $GITHUB_ENV
-          if [[ -z "$(ls -A "$HOME/theos/sdks" 2>/dev/null || true)" ]]; then
-            "$HOME/theos/bin/install-sdk" || true
+          [ -n "$(ls -A "$HOME/theos/sdks" 2>/dev/null)" ] || "$HOME/theos/bin/install-sdk" || true
+      - name: Generate
+        run: python3 dump.py
+      - name: Commit back
+        run: |
+          git config user.name "bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || (git commit -m "gen [skip ci]" && git push)
+      - name: Dobby
+        run: |
+          if [ -f vendor/dobby/build/libdobby.a ]; then
+            echo "Dobby already built, skipping."
+            exit 0
           fi
-
-      - name: Install insert_dylib
-        run: |
-          git clone --depth 1 https://github.com/Tyilo/insert_dylib /tmp/insert_dylib
-          cd /tmp/insert_dylib && xcodebuild -quiet
-          sudo cp "$(find . -name insert_dylib -type f -perm +111 | head -n1)" /usr/local/bin/
-
-      - name: Write project tree
-        run: python3 ${{ github.workspace }}/write_tree.py
-
-      - name: Commit generated files back to repo
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Makefile CODMCheat.mm Src/
-          if git diff --cached --quiet; then
-            echo "no changes to commit"
-          else
-            git commit -m "generate source tree [skip ci]"
-            git push
-          fi
-
-      - name: Vendor fishhook
-        run: |
-          mkdir -p vendor/fishhook
-          git clone --depth 1 https://github.com/facebook/fishhook /tmp/fh
-          cp /tmp/fh/fishhook.c /tmp/fh/fishhook.h vendor/fishhook/
-
-      - name: Build Dobby
-        run: |
-          mkdir -p vendor/dobby/build
-          git clone --depth 1 --recursive https://github.com/jmpews/Dobby.git vendor/dobby
-          cd vendor/dobby/build
-          cmake .. \
-            -DCMAKE_TOOLCHAIN_FILE=../cmake/ios.toolchain.cmake \
+          rm -rf vendor/dobby
+          git clone --depth 1 --recursive https://github.com/jmpews/Dobby.git /tmp/dobby
+          mkdir -p /tmp/dobby/build && cd /tmp/dobby/build
+          cmake /tmp/dobby \
+            -DCMAKE_TOOLCHAIN_FILE=/tmp/dobby/cmake/ios.toolchain.cmake \
             -DPLATFORM=OS64 -DARCHS=arm64 -DCMAKE_SYSTEM_PROCESSOR=arm64 \
             -DENABLE_BITCODE=0 -DENABLE_ARC=0 -DENABLE_VISIBILITY=1 \
             -DDEPLOYMENT_TARGET=14.0 -DDynamicBinaryInstrument=ON -DNearBranch=ON \
@@ -71,23 +45,15 @@ jobs:
             -DPlugin.Darwin.ObjectiveC=ON -DDarwin.GenerateFramework=OFF \
             -DCMAKE_BUILD_TYPE=Release
           make -j$(sysctl -n hw.ncpu)
-          FOUND="$(find "$PWD" -name libdobby.a | head -n1)"
           mkdir -p "$GITHUB_WORKSPACE/vendor/dobby/build"
-          cp "$FOUND" "$GITHUB_WORKSPACE/vendor/dobby/build/libdobby.a"
-
-      - name: Build dylib
-        run: |
-          make clean || true
-          make
-
+          cp "$(find /tmp/dobby -name libdobby.a | head -n1)" "$GITHUB_WORKSPACE/vendor/dobby/build/libdobby.a"
+      - name: Build
+        run: make clean || true; make
       - name: Collect
         run: |
           mkdir -p dist
-          SRC=$(find .theos/obj -name CODMCheat.dylib | head -n1)
-          [[ -n "$SRC" ]] || { echo "no dylib produced"; find .theos -name "*.dylib" -o -name "*.a" 2>/dev/null | head -n30; exit 1; }
-          cp "$SRC" dist/CODMCheat.dylib
+          cp "$(find .theos/obj -name CODMCheat.dylib | head -n1)" dist/CODMCheat.dylib
           lipo -info dist/CODMCheat.dylib
-
       - uses: actions/upload-artifact@v4
         with:
           name: CODMCheat-dylib
