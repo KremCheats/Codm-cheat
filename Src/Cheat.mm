@@ -63,10 +63,9 @@
     if (self.unityOk) {
         [s appendFormat:@"fw: 0x%lx\n", (unsigned long)Unity::frameworkBase()];
         [s appendFormat:@"syms: %d/13\n", Unity::resolvedSymbols()];
-        [s appendFormat:@"classes: %d\n", Unity::classCount()];
-        [s appendString:@"il2cpp reachable"];
+        [s appendString:@"il2cpp symbols present"];
     } else {
-        [s appendString:@"waiting for unity..."];
+        [s appendString:@"waiting..."];
     }
     [ov setInfoText:s];
 }
