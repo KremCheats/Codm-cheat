@@ -41,7 +41,7 @@ __attribute__((constructor))
 static void CODMCheatEntry(void) {
     @autoreleasepool {
         if (!isCODM()) return;
-        LOGI("CODMCheat entry (non-JB, fishhook)");
+        LOGI("CODMCheat entry");
         Bypass::install();
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
@@ -134,17 +134,14 @@ static int make_writable(void *addr, size_t size) {
     uintptr_t page_start = start & ~(pg - 1);
     uintptr_t page_end = (end + pg - 1) & ~(pg - 1);
     size_t len = (size_t)(page_end - page_start);
-
     kern_return_t kr = vm_protect(mach_task_self(), (vm_address_t)page_start,
                                   (vm_size_t)len, false,
                                   VM_PROT_READ | VM_PROT_WRITE);
     if (kr == KERN_SUCCESS) return 0;
-
     kr = vm_protect(mach_task_self(), (vm_address_t)page_start,
                     (vm_size_t)len, false,
                     VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
     if (kr == KERN_SUCCESS) return 0;
-
     if (mprotect((void *)page_start, len, PROT_READ | PROT_WRITE) == 0) return 0;
     return -1;
 }
@@ -155,10 +152,8 @@ static void perform_rebinding_with_section(struct rebindings_entry *rebindings,
                                             uint32_t *indirect_symtab) {
     uint32_t *indirect_symbol_indices = indirect_symtab + section->reserved1;
     void **indirect_symbol_bindings = (void **)((uintptr_t)slide + section->addr);
-
     if (section->size == 0) return;
     make_writable(indirect_symbol_bindings, section->size);
-
     for (uint i = 0; i < section->size / sizeof(void *); i++) {
         uint32_t symtab_index = indirect_symbol_indices[i];
         if (symtab_index == INDIRECT_SYMBOL_ABS || symtab_index == INDIRECT_SYMBOL_LOCAL ||
@@ -324,7 +319,7 @@ static const char *kSuspect[] = {
     "CODMCheat", "frida", "Frida", "gum-js", "gadget", "cycript",
     "CydiaSubstrate", "MobileSubstrate", "Substrate", "libhooker",
     "ElleKit", "ellekit", "substitute", "Substitute", "TweakInject",
-    "cynject", ".mahi", NULL
+    "cynject", NULL
 };
 static inline bool isSuspect(const char *p) {
     if (!p) return false;
@@ -335,18 +330,12 @@ static inline bool isSuspect(const char *p) {
 
 static const char *kJbPaths[] = {
     "/Applications/Cydia.app", "/Applications/Sileo.app", "/Applications/Zebra.app",
-    "/Applications/Filza.app", "/Applications/Installer.app",
-    "/Library/MobileSubstrate", "/Library/MobileSubstrate/MobileSubstrate.dylib",
-    "/Library/MobileSubstrate/DynamicLibraries", "/Library/Substrate", "/Library/Themes",
+    "/Applications/Filza.app", "/Library/MobileSubstrate", "/Library/Substrate",
     "/bin/bash", "/bin/sh", "/bin/zsh",
     "/usr/sbin/sshd", "/usr/bin/ssh", "/usr/bin/sshd",
-    "/usr/libexec/sftp-server", "/usr/libexec/ssh-keysign",
-    "/etc/apt", "/etc/ssh/sshd_config", "/private/etc/apt",
+    "/etc/apt", "/etc/ssh/sshd_config",
     "/private/var/lib/apt", "/private/var/lib/cydia", "/private/var/stash",
-    "/private/var/tmp/cydia.log", "/private/var/mobile/Library/SBSettings/Themes",
-    "/var/cache/apt", "/var/lib/dpkg", "/var/lib/cydia",
     "/var/jb", "/var/jb/usr/bin/ssh", "/var/jb/Library/MobileSubstrate",
-    "/var/jb/Applications/Sileo.app", "/var/jb/Applications/Zebra.app",
     NULL
 };
 static inline bool isJbPath(const char *p) {
@@ -407,11 +396,6 @@ static int h_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
     return r;
 }
 
-// --- dyld virtualization ---
-// IMPORTANT: inside each hook, use the SAVED original (o_*) — calling the
-// raw _dyld_* symbol would recurse because that symbol is what we just
-// rebound to ourselves.
-
 static uint32_t (*o_dyld_count)(void);
 static const char *(*o_dyld_name)(uint32_t);
 static const struct mach_header *(*o_dyld_hdr)(uint32_t);
@@ -437,8 +421,8 @@ static const char *h_dyld_name(uint32_t idx) {
     return o_dyld_name(idx);
 }
 
-LevelAlertstatic const struct mach_header * +h_dyld_hdr (uint32_t idx) {
-    uint32_t real =100 o_dyld_count();
+static const struct mach_header *h_dyld_hdr(uint32_t idx) {
+    uint32_t real = o_dyld_count();
     uint32_t seen = 0;
     for (uint32_t i = 0; i < real; i++) {
         const char *nm = o_dyld_name(i);
@@ -513,16 +497,14 @@ static BOOL (*o_cOU)(UIApplication *, SEL, NSURL *);
 static BOOL h_cOU(UIApplication *s, SEL c, NSURL *u) {
     NSString *sc = [[u scheme] lowercaseString];
     if ([sc isEqualToString:@"cydia"] || [sc isEqualToString:@"sileo"] ||
-        [sc isEqualToString:@"zbra"]  || [sc isEqualToString:@"filza"] ||
-        [sc isEqualToString:@"undecimus"] || [sc isEqualToString:@"checkra1n"])
-        return NO;
+        [sc isEqualToString:@"zbra"]  || [sc isEqualToString:@"filza"]) return NO;
     return o_cOU(s, c, u);
 }
 
 namespace Bypass {
 
 void install() {
-    LOGI("Bypass installing (fishhook)");
+    LOGI("Bypass installing");
     HK::rebind("fopen",   (void *)h_fopen,   (void **)&o_fopen);
     HK::rebind("stat",    (void *)h_stat,    (void **)&o_stat);
     HK::rebind("lstat",   (void *)h_lstat,   (void **)&o_lstat);
@@ -539,8 +521,6 @@ void install() {
     HK::swizzleClass([UIApplication class], @selector(canOpenURL:),
                      (IMP)h_cOU, (IMP *)&o_cOU);
 
-    // dyld — these MUST be rebound AFTER we've stored all the originals
-    // because the hooks call each other's saved originals internally.
     HK::rebind("_dyld_image_count",             (void *)h_dyld_count, (void **)&o_dyld_count);
     HK::rebind("_dyld_get_image_name",          (void *)h_dyld_name,  (void **)&o_dyld_name);
     HK::rebind("_dyld_get_image_header",        (void *)h_dyld_hdr,   (void **)&o_dyld_hdr);
@@ -584,7 +564,7 @@ w("Src/Overlay.mm", r"""
 }
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self = [super initWithFrame:frame])) {
-        self.windowLevel = UIWindow;
+        self.windowLevel = UIWindowLevelAlert + 100;
         self.backgroundColor = [UIColor clearColor];
         self.userInteractionEnabled = NO;
         self.rootViewController = [UIViewController new];
@@ -647,4 +627,4 @@ w("Src/Cheat.mm", r"""
 @end
 """)
 
-print("wrote fishhook tree with recursion fix")
+print("done")
