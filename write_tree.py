@@ -127,6 +127,34 @@ static int prepend_rebindings(struct rebindings_entry **rebindings_head,
     return 0;
 }
 
+static int make_writable(void *addr, size_t size) {
+    // Use 16 KB fixed page size — arm64 iOS. vm_page_size may not be
+    // initialized during very early constructors, so don't trust it.
+    const uintptr_t pg = 0x4000;
+    uintptr_t start = (uintptr_t)addr;
+    uintptr_t end = start + size;
+    uintptr_t page_start = start & ~(pg - 1);
+    uintptr_t page_end = (end + pg - 1) & ~(pg - 1);
+    size_t len = (size_t)(page_end - page_start);
+
+    // Attempt 1: vm_protect with RW, no COPY.
+    kern_return_t kr = vm_protect(mach_task_self(), (vm_address_t)page_start,
+                                  (vm_size_t)len, false,
+                                  VM_PROT_READ | VM_PROT_WRITE);
+    if (kr == KERN_SUCCESS) return 0;
+
+    // Attempt 2: vm_protect with RW + COPY.
+    kr = vm_protect(mach_task_self(), (vm_address_t)page_start,
+                    (vm_size_t)len, false,
+                    VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
+    if (kr == KERN_SUCCESS) return 0;
+
+    // Attempt 3: mprotect fallback.
+    if (mprotect((void *)page_start, len, PROT_READ | PROT_WRITE) == 0) return 0;
+
+    return -1;
+}
+
 static void perform_rebinding_with_section(struct rebindings_entry *rebindings,
                                             section_t *section, intptr_t slide,
                                             nlist_t *symtab, char *strtab,
@@ -134,21 +162,10 @@ static void perform_rebinding_with_section(struct rebindings_entry *rebindings,
     uint32_t *indirect_symbol_indices = indirect_symtab + section->reserved1;
     void **indirect_symbol_bindings = (void **)((uintptr_t)slide + section->addr);
 
-    // iOS 15+ keeps __DATA_CONST mapped read-only. Make the pages writable
-    // for the duration of the rebind. VM_PROT_COPY forces a COW snapshot
-    // so the original image on disk isn't touched.
-    if (section->size > 0) {
-        uintptr_t start = (uintptr_t)indirect_symbol_bindings;
-        uintptr_t end = start + section->size;
-        uintptr_t page_mask = ~(uintptr_t)(vm_page_size - 1);
-        uintptr_t page_start = start & page_mask;
-        uintptr_t page_end = (end + vm_page_size - 1) & page_mask;
-        vm_protect(mach_task_self(),
-                   (vm_address_t)page_start,
-                   (vm_size_t)(page_end - page_start),
-                   false,
-                   VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
-    }
+    if (section->size == 0) return;
+
+    // Make the entire section writable before touching it.
+    make_writable(indirect_symbol_bindings, section->size);
 
     for (uint i = 0; i < section->size / sizeof(void *); i++) {
         uint32_t symtab_index = indirect_symbol_indices[i];
@@ -626,4 +643,4 @@ w("Src/Cheat.mm", r"""
 @end
 """)
 
-print("wrote fishhook tree with vm_protect")
+print("wrote fishhook tree with multi-fallback make_writable")
