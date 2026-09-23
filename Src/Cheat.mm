@@ -27,7 +27,6 @@
                                                      selector:@selector(tryAttach)
                                                      userInfo:nil
                                                       repeats:YES];
-    // Unity is usually ready ~5-8s in.
     self.unityRetry = [NSTimer scheduledTimerWithTimeInterval:2.0
                                                        target:self
                                                      selector:@selector(tryUnity)
@@ -63,7 +62,7 @@
     [s appendFormat:@"unity: %s\n", Unity::statusMessage()];
     if (self.unityOk) {
         [s appendFormat:@"fw: 0x%lx\n", (unsigned long)Unity::frameworkBase()];
-        [s appendFormat:@"syms: %d\n", Unity::resolvedSymbols()];
+        [s appendFormat:@"syms: %d/13\n", Unity::resolvedSymbols()];
         [s appendFormat:@"classes: %d\n", Unity::classCount()];
         [s appendString:@"il2cpp reachable"];
     } else {

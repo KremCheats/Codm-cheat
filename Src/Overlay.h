@@ -4,7 +4,8 @@
 #import <QuartzCore/QuartzCore.h>
 @interface CheatOverlay : UIWindow
 @property (nonatomic, strong) CAShapeLayer *boxes;
-@property (nonatomic, strong) CATextLayer *ancetype)shared;
+@property (nonatomic, strong) CATextLayer *info;
++ (instancetype)shared;
 - (void)attachToScene;
 - (void)begin;
 - (void)setInfoText:(NSString *)t;

@@ -2,6 +2,7 @@
 #import "Common.h"
 #import <dlfcn.h>
 #import <string.h>
+#import <stdio.h>
 #import <mach-o/dyld.h>
 #import <mach-o/loader.h>
 
@@ -24,7 +25,7 @@ t_class_get_namespace    p_class_get_namespace    = nullptr;
 static uintptr_t g_base = 0;
 static void*     g_domain = nullptr;
 static void*     g_img    = nullptr;
-static char      g_status[128] = "not initialized";
+static char      g_status[160] = "not initialized";
 static int       g_syms   = 0;
 static int       g_classes = 0;
 
@@ -33,10 +34,9 @@ static void* rs(const char* n) { return dlsym(RTLD_DEFAULT, n); }
 static uintptr_t findUnityBase() {
     uint32_t n = _dyld_image_count();
     for (uint32_t i = 0; i < n; i++) {
-        const char* nm = _dyld_get_imageinfo_name(i;
-);
-        if (nm &&+ strstr(nm, "UnityFramework (")) {
-            return (uintptr_tinst)_dyld_get_image_header(i);
+        const char* nm = _dyld_get_image_name(i);
+        if (nm && strstr(nm, "UnityFramework")) {
+            return (uintptr_t)_dyld_get_image_header(i);
         }
     }
     return 0;
@@ -79,19 +79,17 @@ bool init() {
     if (p_class_get_namespace) g_syms++;
 
     if (!p_domain_get || !p_domain_assembly_open || !p_assembly_get_image) {
-        snprintf(g_status, sizeof(g_status),
-                 "il2cpp core missing (%d/13)", g_syms);
+        snprintf(g_status, sizeof(g_status), "il2cpp core missing (%d/13)", g_syms);
         return false;
     }
 
     g_domain = p_domain_get();
     if (!g_domain) {
-        snprintf(g_status, sizeof(g_status), "il2cpp_domain_get null");
+        snprintf(g_status, sizeof(g_status), "domain_get returned null");
         return false;
     }
     if (p_thread_attach) p_thread_attach(g_domain);
 
-    // try to open Assembly-CSharp and count classes
     void* asm_ = p_domain_assembly_open(g_domain, "Assembly-CSharp");
     if (asm_) {
         g_img = p_assembly_get_image(asm_);
@@ -126,9 +124,7 @@ void* image(const char* name) {
 }
 
 void* klass(const char* ns, const char* name) {
-    if (!g_img) {
-        g_img = image("Assembly-CSharp");
-    }
+    if (!g_img) g_img = image("Assembly-CSharp");
     if (!g_img || !p_class_from_name) return nullptr;
     return p_class_from_name(g_img, ns, name);
 }
@@ -143,4 +139,4 @@ void* field(void* k, const char* name) {
     return p_class_get_field_from_name(k, name);
 }
 
-} // namespace Unity
+}

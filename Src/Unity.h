@@ -5,7 +5,6 @@
 
 namespace Unity {
 
-// IL2CPP exported symbols we care about.
 typedef void* (*t_domain_get)();
 typedef void* (*t_thread_attach)(void*);
 typedef void* (*t_domain_assembly_open)(void*, const char*);
@@ -20,16 +19,12 @@ typedef void* (*t_image_get_class)(void*, uint32_t);
 typedef const char* (*t_class_get_name)(void*);
 typedef const char* (*t_class_get_namespace)(void*);
 
-// init: locate UnityFramework, resolve symbols, get domain. Returns true on success.
 bool init();
-
-// introspection for diagnostics
-const char* statusMessage();   // human readable, "il2cpp ok" etc.
+const char* statusMessage();
 uintptr_t frameworkBase();
-int       resolvedSymbols();
-int       classCount();
+int resolvedSymbols();
+int classCount();
 
-// access
 void* domain();
 void* image(const char* name);
 void* klass(const char* ns, const char* name);
@@ -50,5 +45,5 @@ extern t_image_get_class        p_image_get_class;
 extern t_class_get_name         p_class_get_name;
 extern t_class_get_namespace    p_class_get_namespace;
 
-} // namespace Unity
+}
 #endif
